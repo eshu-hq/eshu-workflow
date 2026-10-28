@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -15,9 +16,14 @@ import (
 	workflowv1 "github.com/eshu-hq/eshu-workflow/workflowv1"
 )
 
-// errTestPlaneUnreachable models a claim-plane that is not yet
-// listening, as seen on joint rollouts.
-var errTestPlaneUnreachable = errors.New("connection refused")
+// planeUnreachable models a claim-plane that is not yet listening, as
+// seen on joint rollouts. The HTTP client surfaces transport failures
+// as *url.Error, which is exactly what the startup retry classifies as
+// transient; deterministic plane answers arrive as
+// *workflowv1.ProtocolError instead and must fail fast.
+func planeUnreachable() *url.Error {
+	return &url.Error{Op: "Post", URL: "http://claim-plane.internal/", Err: errors.New("connection refused")}
+}
 
 // fakePlane is an in-memory ControlPlane: idempotent run upserts and
 // work-item inserts with a mutex, so concurrent reconciles contend the
@@ -33,8 +39,16 @@ type fakePlane struct {
 	loopCursor bool
 	depthErr   error
 	// reconcileFailures counts down forced ReconcileCollectorInstances
-	// failures, modeling a claim-plane that is not yet reachable.
-	reconcileFailures int
+	// transport failures, modeling a claim-plane that is not yet
+	// reachable. reapFailures and reconcileRunsFailures do the same
+	// for the other two initial passes.
+	reconcileFailures     int
+	reapFailures          int
+	reconcileRunsFailures int
+	// reconcileDeterministicErr, when set, fails every
+	// ReconcileCollectorInstances call with a deterministic plane
+	// answer that must fail startup fast instead of retrying.
+	reconcileDeterministicErr error
 }
 
 func newFakePlane() *fakePlane {
@@ -81,9 +95,12 @@ func (f *fakePlane) ReconcileCollectorInstances(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.note("ReconcileCollectorInstances")
+	if f.reconcileDeterministicErr != nil {
+		return f.reconcileDeterministicErr
+	}
 	if f.reconcileFailures > 0 {
 		f.reconcileFailures--
-		return errTestPlaneUnreachable
+		return planeUnreachable()
 	}
 	keep := map[string]bool{}
 	for _, d := range desired {
@@ -193,6 +210,10 @@ func (f *fakePlane) ReconcileWorkflowRuns(_ context.Context, _ time.Time) (int, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.note("ReconcileWorkflowRuns")
+	if f.reconcileRunsFailures > 0 {
+		f.reconcileRunsFailures--
+		return 0, planeUnreachable()
+	}
 	return 0, nil
 }
 
@@ -205,6 +226,10 @@ func (f *fakePlane) ReapExpiredClaims(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.note("ReapExpiredClaims")
+	if f.reapFailures > 0 {
+		f.reapFailures--
+		return nil, planeUnreachable()
+	}
 	return []workflowv1.Claim{}, nil
 }
 

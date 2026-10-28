@@ -60,7 +60,9 @@ type Config struct {
 	// selects the default.
 	ScanInterval time.Duration
 	// StartupReconcileAttempts bounds retries of the initial passes
-	// while the claim-plane is unreachable at startup. Zero selects
+	// while the claim-plane is unreachable at startup. Only
+	// transport-level failures retry; deterministic answers fail on
+	// the first attempt without consuming this budget. Zero selects
 	// the default.
 	StartupReconcileAttempts int
 	// StartupReconcileInterval spaces the initial-pass retries. Zero
