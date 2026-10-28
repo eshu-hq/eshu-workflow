@@ -41,6 +41,8 @@ type options struct {
 	deploymentMode           string
 	claimsEnabled            bool
 	reconcileInterval        time.Duration
+	startupAttempts          int
+	startupInterval          time.Duration
 	runReconcileInterval     time.Duration
 	reapInterval             time.Duration
 	scanInterval             time.Duration
@@ -60,6 +62,8 @@ func parseFlags(args []string) (options, error) {
 		"coordinator deployment mode: dark or active")
 	fs.BoolVar(&opts.claimsEnabled, "claims-enabled", false, "plan and admit work in active mode")
 	fs.DurationVar(&opts.reconcileInterval, "reconcile-interval", 0, "instance reconciliation interval (0 selects default)")
+	fs.IntVar(&opts.startupAttempts, "startup-attempts", 0, "initial-pass retries while the plane is unreachable (0 selects default)")
+	fs.DurationVar(&opts.startupInterval, "startup-interval", 0, "spacing for initial-pass retries (0 selects default)")
 	fs.DurationVar(&opts.runReconcileInterval, "run-reconcile-interval", 0, "drained-run reconciliation interval (0 selects default)")
 	fs.DurationVar(&opts.reapInterval, "reap-interval", 0, "expired-claim reap interval (0 selects default)")
 	fs.DurationVar(&opts.scanInterval, "scan-interval", 0, "deterministic plan-key window (0 selects default)")
@@ -117,6 +121,8 @@ func run(ctx context.Context, logger *slog.Logger, opts options) error {
 			DeploymentMode:           opts.deploymentMode,
 			ClaimsEnabled:            opts.claimsEnabled,
 			ReconcileInterval:        opts.reconcileInterval,
+			StartupReconcileAttempts: opts.startupAttempts,
+			StartupReconcileInterval: opts.startupInterval,
 			RunReconcileInterval:     opts.runReconcileInterval,
 			ReapInterval:             opts.reapInterval,
 			ScanInterval:             opts.scanInterval,

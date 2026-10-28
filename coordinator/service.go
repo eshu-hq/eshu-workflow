@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/eshu-hq/eshu-workflow/client"
@@ -59,6 +60,53 @@ func (s Service) logger() *slog.Logger {
 	return telemetry.Logger(s.Logger)
 }
 
+// transientPlaneError reports whether err is a transport-level
+// claim-plane failure: refused connection, timeout, reset. The HTTP
+// client surfaces those as *url.Error through every wrapped pass. A
+// coded plane answer (*workflowv1.ProtocolError) or a local
+// deterministic failure is an answered error, not an unreachable
+// plane, so it fails fast instead of burning the startup budget.
+func transientPlaneError(err error) bool {
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
+}
+
+// retryInitial repeats one startup pass until it succeeds, the attempt
+// budget exhausts, or ctx ends. Only unreachable-plane transients
+// retry: the claim-plane is routinely unreachable for the first
+// seconds of a joint rollout, and failing fast turns that into a
+// crash loop. A deterministic failure answers on the first attempt,
+// and a permanently unreachable plane still fails startup with the
+// same error text.
+func (s Service) retryInitial(ctx context.Context, what string, pass func(context.Context) error) error {
+	logger := s.logger()
+	var err error
+	for attempt := 1; ; attempt++ {
+		if err = pass(ctx); err == nil {
+			return nil
+		}
+		if !transientPlaneError(err) {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		if attempt >= s.Config.StartupReconcileAttempts {
+			logger.Warn("startup pass failed, budget exhausted",
+				slog.String("pass", what),
+				slog.Int("attempts", attempt),
+				slog.String("error", err.Error()))
+			return fmt.Errorf("%s: %w (after %d attempts)", what, err, attempt)
+		}
+		logger.Warn("startup pass failed, retrying",
+			slog.String("pass", what),
+			slog.Int("attempt", attempt),
+			slog.String("error", err.Error()))
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s: %w", what, ctx.Err())
+		case <-time.After(s.Config.StartupReconcileInterval):
+		}
+	}
+}
+
 // Run reconciles on its intervals until ctx ends: instance state always,
 // and in active mode expired-claim reaping plus drained-run
 // reconciliation.
@@ -74,15 +122,15 @@ func (s Service) Run(ctx context.Context) error {
 		return err
 	}
 	logger := s.logger()
-	if err := s.Reconcile(ctx); err != nil {
-		return fmt.Errorf("initial collector reconciliation: %w", err)
+	if err := s.retryInitial(ctx, "initial collector reconciliation", s.Reconcile); err != nil {
+		return err
 	}
 	if s.Config.DeploymentMode == DeploymentModeActive {
-		if err := s.Reap(ctx); err != nil {
-			return fmt.Errorf("initial expired-claim reap: %w", err)
+		if err := s.retryInitial(ctx, "initial expired-claim reap", s.Reap); err != nil {
+			return err
 		}
-		if err := s.ReconcileRuns(ctx); err != nil {
-			return fmt.Errorf("initial workflow run reconciliation: %w", err)
+		if err := s.retryInitial(ctx, "initial workflow run reconciliation", s.ReconcileRuns); err != nil {
+			return err
 		}
 	}
 	logger.Info("coordinator running",

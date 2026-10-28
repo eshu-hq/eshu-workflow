@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestVersionFlagParses(t *testing.T) {
@@ -16,6 +17,24 @@ func TestVersionFlagParses(t *testing.T) {
 	}
 	if !opts.showVersion {
 		t.Fatal("showVersion = false, want true")
+	}
+}
+
+func TestStartupFlagsParse(t *testing.T) {
+	t.Setenv("WORKFLOW_COORDINATOR_CLAIM_PLANE_URL", "")
+	opts, err := parseFlags([]string{
+		"--claim-plane-url", "http://localhost:8080",
+		"--startup-attempts", "7",
+		"--startup-interval", "2s",
+	})
+	if err != nil {
+		t.Fatalf("parse startup flags: %v", err)
+	}
+	if opts.startupAttempts != 7 {
+		t.Fatalf("startupAttempts = %d, want 7", opts.startupAttempts)
+	}
+	if opts.startupInterval != 2*time.Second {
+		t.Fatalf("startupInterval = %v, want 2s", opts.startupInterval)
 	}
 }
 
