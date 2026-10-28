@@ -1,0 +1,5 @@
+# Go build output
+/coverage.out
+
+# Module cache leftovers
+/vendor/

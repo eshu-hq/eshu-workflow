@@ -1,0 +1,28 @@
+# Shared org golangci-lint config for collector repos + SDK modules.
+# Pinned to golangci-lint v2.12.2 (same binary Eshu uses).
+# Org lint set only: govet, staticcheck (which subsumes gosimple in v2),
+# ineffassign, unused, errcheck; formatter gofumpt. No baselines,
+# no new-from-rev.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - errcheck
+
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules: []
+
+formatters:
+  enable:
+    - gofumpt
+  settings:
+    gofumpt:
+      extra-rules: false
