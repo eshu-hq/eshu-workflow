@@ -1,0 +1,20 @@
+coordinator/config.go
+  h_78a442cba0b3e6 63-65
+coordinator/fake_control_plane_test.go
+  h_78a442cba0b3e6 10,19-26,42-51,98-100,103,213-216,229-232
+coordinator/run_test.go
+  h_78a442cba0b3e6 169-330
+coordinator/service.go
+  h_78a442cba0b3e6 11,63-73,75-80,88-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "539e2b73514a23f1bd59599c36d051d7b0bdea06",
+  "prompts": {},
+  "humans": {
+    "h_78a442cba0b3e6": {
+      "author": "Allen Sanabria <asanabria6910@gmail.com>"
+    }
+  }
+}
