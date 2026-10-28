@@ -1,0 +1,82 @@
+# Publishes the workflow service image to GHCR when main advances.
+#
+# Registry choice: ghcr.io/eshu-hq, the same convention as the monolith
+# image ghcr.io/eshu-hq/eshu. No ECR convention exists for the satellite
+# repos, so ghcr.io stays the default until one is decided.
+#
+# Only linux/amd64 is built: EKS nodes are amd64, and the Dockerfile pins
+# GOARCH=amd64 for the same reason (#8868).
+#
+# Docker action versions mirror the monolith docker-publish.yml (proven):
+#   docker/setup-buildx-action v3
+#   docker/login-action v3
+#   docker/metadata-action v5
+#   docker/build-push-action v5
+
+name: image-publish
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'go.mod'
+      - 'go.sum'
+      - '**/*.go'
+      - '.github/workflows/image-publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: eshu-hq/eshu-workflow
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=main
+            type=sha,prefix=sha-,format=long
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+      - name: Record digest
+        run: |
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

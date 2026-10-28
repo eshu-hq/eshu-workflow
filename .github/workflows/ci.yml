@@ -1,11 +1,12 @@
 # CI gates for eshu-workflow.
 #
 # Stable job names (org contract; only ci-complete is ever required in a
-# ruleset): changes, lint, test, race, shell, boundary, govulncheck,
-# gosec, actionlint, ci-complete.
+# ruleset): changes, lint, test, race, shell, boundary, image,
+# govulncheck, gosec, actionlint, ci-complete.
 #
-# The image lane arrives with the server (Dockerfile + cmd) in Stage 1b;
-# until then there is nothing to build into an image.
+# The image lane builds the service image (Dockerfile + cmd) without
+# pushing. Publication to ghcr.io lives in image-publish.yml, which runs
+# on push to main and tags the immutable digest ops-qa deploys pin.
 #
 # Pinned actions (SHAs mirror eshu-collector-cicd-run, resolved 2026-10-27):
 #   actions/checkout v7.0.1              3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -50,6 +51,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       shell: ${{ steps.filter.outputs.shell }}
       deps: ${{ steps.filter.outputs.deps }}
+      image: ${{ steps.filter.outputs.image }}
       workflows: ${{ steps.filter.outputs.workflows }}
       misc: ${{ steps.filter.outputs.misc }}
     steps:
@@ -71,6 +73,9 @@ jobs:
             deps:
               - 'go.mod'
               - 'go.sum'
+            image:
+              - 'Dockerfile'
+              - '.dockerignore'
             workflows:
               - '.github/workflows/**'
             misc:
@@ -83,6 +88,8 @@ jobs:
               - '!go.sum'
               - '!.golangci.yml'
               - '!**/*.sh'
+              - '!Dockerfile'
+              - '!.dockerignore'
               - '!.github/workflows/**'
 
   lint:
@@ -219,6 +226,27 @@ jobs:
           go-version-file: go.mod
       - run: go test -count=1 -run TestImportBoundaryStaysStdlibOnly ./workflowv1/
 
+  image:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.image == 'true' || needs.changes.outputs.go == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: build image (no push)
+        run: docker build -t ci-workflow:ci .
+      - name: every Dockerfile base is digest-pinned
+        # The build is never pushed, so there is no fresh RepoDigest to
+        # compare against here. This step proves the next best thing: the
+        # build succeeds and every Dockerfile base is digest-pinned (no
+        # floating tags), so ops-qa deploys pin an immutable rootfs.
+        run: |
+          set -euo pipefail
+          from_total=$(grep -Ec '^[[:space:]]*FROM ' Dockerfile)
+          from_pinned=$(grep -Ec '^[[:space:]]*FROM [^[:space:]]+@sha256:[0-9a-f]{64}' Dockerfile)
+          echo "Dockerfile bases: $from_pinned/$from_total digest-pinned"
+          [ "$from_pinned" -ge 1 ] && [ "$from_pinned" -eq "$from_total" ]
+
   govulncheck:
     needs: [changes]
     if: github.event_name != 'pull_request' || github.event_name == 'schedule' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflows == 'true'
@@ -277,7 +305,7 @@ jobs:
         # whenever actionlint reports an error.
 
   ci-complete:
-    needs: [changes, lint, test, race, shell, boundary, govulncheck, gosec, actionlint]
+    needs: [changes, lint, test, race, shell, boundary, image, govulncheck, gosec, actionlint]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
