@@ -150,6 +150,9 @@ func TestRunExhaustsStartupBudget(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "initial collector reconciliation") {
 		t.Fatalf("startup exhaustion: %v", err)
 	}
+	if !strings.Contains(err.Error(), "after 3 attempts") {
+		t.Fatalf("exhaustion error omits consumed budget: %v", err)
+	}
 	plane.mu.Lock()
 	defer plane.mu.Unlock()
 	attempts := 0

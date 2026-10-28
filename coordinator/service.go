@@ -72,7 +72,11 @@ func (s Service) retryInitial(ctx context.Context, what string, pass func(contex
 			return nil
 		}
 		if attempt >= s.Config.StartupReconcileAttempts {
-			return fmt.Errorf("%s: %w", what, err)
+			logger.Warn("startup pass failed, budget exhausted",
+				slog.String("pass", what),
+				slog.Int("attempts", attempt),
+				slog.String("error", err.Error()))
+			return fmt.Errorf("%s: %w (after %d attempts)", what, err, attempt)
 		}
 		logger.Warn("startup pass failed, retrying",
 			slog.String("pass", what),
