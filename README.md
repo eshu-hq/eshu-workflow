@@ -26,10 +26,30 @@ is a major protocol change while any reader fails the read.
 `CollectorKind` stays open (families grow without a major) but never
 blank.
 
+## Claim-plane server
+
+`cmd/claim-plane` serves the 14 protocol routes over its own Postgres
+database (`store`, pgx, fresh-install migrations in
+`store/migrations`). Heartbeat and complete enforce fencing only: the
+in-tree tenant-grant join is gone because grant tables stay core-owned
+and grant authority moves to the commit pin plus core admission. An
+internal reaper expires stale claims (skipping pinned ones) and
+reconciles drained runs. Admin listener serves `/healthz`, `/readyz`,
+and `/metrics`.
+
+```sh
+CLAIMPLANE_DATABASE_URL='postgres://user:pass@localhost:5432/claimplane?sslmode=disable' \
+  go run ./cmd/claim-plane --listen :8080 --admin-listen :8081
+```
+
+Tests need Postgres: `CLAIMPLANE_TEST_DATABASE_URL` overrides the
+per-package default databases (`claimplane_test_store`,
+`claimplane_test_server`).
+
 ## Status
 
 - [x] Stage 1a: protocol contract (`workflowv1`) with tests and CI.
-- [ ] Stage 1b: claim-plane server with its own database and migrations.
+- [x] Stage 1b: claim-plane server with its own database and migrations.
 - [ ] Stage 1c: coordinator service port (planners, scheduling, report/read planes).
 - [ ] Core client, extracted-path parity, ops-qa deploy, rollback
       rehearsal, production acceptance, in-tree removal.
