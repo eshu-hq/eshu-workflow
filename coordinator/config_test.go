@@ -22,6 +22,8 @@ func validConfig() coordinator.Config {
 		ExpiredClaimLimit:        100,
 		ExpiredClaimRequeueDelay: 5 * time.Second,
 		ScanInterval:             5 * time.Minute,
+		StartupReconcileAttempts: 3,
+		StartupReconcileInterval: time.Second,
 		CollectorInstances:       []workflowv1.DesiredCollectorInstance{schedulableInstance("i-1", "jira")},
 	}
 }
@@ -44,6 +46,16 @@ func TestConfigValidation(t *testing.T) {
 	bad.ExpiredClaimLimit = 0
 	if err := bad.Validate(); err == nil {
 		t.Fatal("zero claim limit validated")
+	}
+	bad = validConfig()
+	bad.StartupReconcileAttempts = 0
+	if err := bad.Validate(); err == nil {
+		t.Fatal("zero startup attempts validated")
+	}
+	bad = validConfig()
+	bad.StartupReconcileInterval = 0
+	if err := bad.Validate(); err == nil {
+		t.Fatal("zero startup interval validated")
 	}
 	bad = validConfig()
 	bad.CollectorInstances = []workflowv1.DesiredCollectorInstance{{}}

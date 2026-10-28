@@ -22,6 +22,12 @@ const (
 	defaultReconcileInterval    = 60 * time.Second
 	defaultRunReconcileInterval = 30 * time.Second
 	defaultScanInterval         = 5 * time.Minute
+	// DefaultStartupReconcileAttempts retries the initial passes for
+	// about two minutes: the claim-plane is routinely unreachable for
+	// the first seconds of a joint rollout, and failing fast turns
+	// that into a crash loop.
+	defaultStartupReconcileAttempts = 24
+	defaultStartupReconcileInterval = 5 * time.Second
 )
 
 // Config captures the coordinator runtime settings.
@@ -53,6 +59,13 @@ type Config struct {
 	// one window plan the same run id, so replays converge. Zero
 	// selects the default.
 	ScanInterval time.Duration
+	// StartupReconcileAttempts bounds retries of the initial passes
+	// while the claim-plane is unreachable at startup. Zero selects
+	// the default.
+	StartupReconcileAttempts int
+	// StartupReconcileInterval spaces the initial-pass retries. Zero
+	// selects the default.
+	StartupReconcileInterval time.Duration
 	// CollectorInstances is the operator-declared instance set the
 	// reconcile owns.
 	CollectorInstances []workflowv1.DesiredCollectorInstance
@@ -84,6 +97,12 @@ func (c Config) withDefaults() Config {
 	if c.ScanInterval == 0 {
 		c.ScanInterval = defaultScanInterval
 	}
+	if c.StartupReconcileAttempts == 0 {
+		c.StartupReconcileAttempts = defaultStartupReconcileAttempts
+	}
+	if c.StartupReconcileInterval == 0 {
+		c.StartupReconcileInterval = defaultStartupReconcileInterval
+	}
 	return c
 }
 
@@ -106,6 +125,12 @@ func (c Config) Validate() error {
 	}
 	if c.ExpiredClaimLimit <= 0 {
 		return fmt.Errorf("expired claim limit must be positive")
+	}
+	if c.StartupReconcileAttempts <= 0 {
+		return fmt.Errorf("startup reconcile attempts must be positive")
+	}
+	if c.StartupReconcileInterval <= 0 {
+		return fmt.Errorf("startup reconcile interval must be positive")
 	}
 	for i := range c.CollectorInstances {
 		if err := c.CollectorInstances[i].Validate(); err != nil {

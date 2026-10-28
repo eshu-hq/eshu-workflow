@@ -86,6 +86,83 @@ func TestRunRejectsBadWiring(t *testing.T) {
 	}
 }
 
+// TestRunRetriesTransientInitialReconcile requires startup to survive
+// a claim-plane that is not yet reachable: two refused reconciles then
+// success must still bring the loop up instead of crash-looping.
+func TestRunRetriesTransientInitialReconcile(t *testing.T) {
+	plane := newFakePlane()
+	plane.reconcileFailures = 2
+	cfg := activeConfig()
+	cfg.DeploymentMode = "dark"
+	cfg.ReconcileInterval = 5 * time.Millisecond
+	cfg.StartupReconcileAttempts = 5
+	cfg.StartupReconcileInterval = time.Millisecond
+	svc := coordinator.Service{Config: cfg, Plane: plane, Planners: coordinator.NewRegistry()}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var runErr error
+	go func() {
+		defer wg.Done()
+		runErr = svc.Run(ctx)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		plane.mu.Lock()
+		attempts := 0
+		for _, call := range plane.calls {
+			if call == "ReconcileCollectorInstances" {
+				attempts++
+			}
+		}
+		plane.mu.Unlock()
+		if attempts >= 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			wg.Wait()
+			t.Fatalf("startup retry never reached the plane 3 times (got %d)", attempts)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	wg.Wait()
+	if runErr != nil {
+		t.Fatalf("run with transient startup failure: %v", runErr)
+	}
+}
+
+// TestRunExhaustsStartupBudget requires a permanently unreachable
+// plane to fail startup after exactly the configured attempts,
+// keeping the original error text.
+func TestRunExhaustsStartupBudget(t *testing.T) {
+	plane := newFakePlane()
+	plane.reconcileFailures = 100
+	cfg := activeConfig()
+	cfg.DeploymentMode = "dark"
+	cfg.StartupReconcileAttempts = 3
+	cfg.StartupReconcileInterval = time.Millisecond
+	svc := coordinator.Service{Config: cfg, Plane: plane, Planners: coordinator.NewRegistry()}
+
+	err := svc.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "initial collector reconciliation") {
+		t.Fatalf("startup exhaustion: %v", err)
+	}
+	plane.mu.Lock()
+	defer plane.mu.Unlock()
+	attempts := 0
+	for _, call := range plane.calls {
+		if call == "ReconcileCollectorInstances" {
+			attempts++
+		}
+	}
+	if attempts != 3 {
+		t.Fatalf("startup attempts = %d, want 3", attempts)
+	}
+}
+
 // TestDarkMaintenanceIsNoOp requires reap and run reconciliation to do
 // nothing outside active mode.
 func TestDarkMaintenanceIsNoOp(t *testing.T) {
