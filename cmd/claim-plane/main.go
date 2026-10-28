@@ -107,7 +107,7 @@ func run(ctx context.Context, logger *slog.Logger, opts options) error {
 	if err := store.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	if err := store.Configure(claimstore.Config{Quotas: quotas, Pacing: opts.pacing}); err != nil {
+	if err := store.Configure(claimstore.Config{Quotas: quotas, Pacing: opts.pacing, Logger: logger}); err != nil {
 		return fmt.Errorf("configure: %w", err)
 	}
 
@@ -118,6 +118,7 @@ func run(ctx context.Context, logger *slog.Logger, opts options) error {
 		return err
 	}
 	srv.Instruments = instruments
+	store.Instruments = instruments
 
 	protocol := &http.Server{
 		Addr:              opts.listen,
@@ -181,9 +182,18 @@ func run(ctx context.Context, logger *slog.Logger, opts options) error {
 	return nil
 }
 
+// reaperStore is the narrow tick surface the reaper needs: expiring
+// stale claims, reconciling drained runs, and reading queue depth. The
+// pgx store implements it; tests substitute a fake.
+type reaperStore interface {
+	Reap(ctx context.Context, asOf time.Time, limit int, requeueDelay time.Duration) ([]workflowv1.Claim, error)
+	ReconcileRuns(ctx context.Context, now time.Time) (int, error)
+	QueueDepth(ctx context.Context, now time.Time) (workflowv1.QueueDepthSnapshot, error)
+}
+
 // reaper expires stale claims and reconciles drained runs on a tick.
 type reaper struct {
-	store       *claimstore.Store
+	store       reaperStore
 	instruments *telemetry.Instruments
 	logger      *slog.Logger
 	interval    time.Duration
@@ -192,7 +202,7 @@ type reaper struct {
 }
 
 func newReaper(
-	store *claimstore.Store,
+	store reaperStore,
 	instruments *telemetry.Instruments,
 	logger *slog.Logger,
 	opts options,

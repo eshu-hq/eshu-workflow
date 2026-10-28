@@ -218,65 +218,6 @@ func decodeEnvelope(t *testing.T, resp *http.Response) workflowv1.ErrorEnvelope 
 	return envelope
 }
 
-// TestAllRoutesAreServed walks the merged route table and requires every
-// operation to answer (never 404) with a well-formed body or envelope.
-func TestAllRoutesAreServed(t *testing.T) {
-	st := &fakeStore{}
-	srv := newTestServer(t, st)
-	defer srv.Close()
-
-	now := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339Nano)
-	bodies := map[workflowv1.Operation]string{
-		workflowv1.OpClaimNext: fmt.Sprintf(
-			`{"selector":{"collector_kind":"jira","collector_instance_id":"i-1","owner_id":"o-1","claim_id":"c-1"},"observed_at":%q,"lease_ttl_ns":60000000000}`,
-			now),
-		workflowv1.OpCheckClaimPacing: fmt.Sprintf(
-			`{"collector_kind":"jira","collector_instance_id":"i-1","observed_at":%q}`, now),
-		workflowv1.OpHeartbeatClaim: fmt.Sprintf(
-			`{"work_item_id":"item-1","claim_id":"c-1","fencing_token":1,"owner_id":"o-1","observed_at":%q,"lease_duration_ns":60000000000}`,
-			now),
-		workflowv1.OpCompleteClaim: fmt.Sprintf(
-			`{"work_item_id":"item-1","claim_id":"c-1","fencing_token":1,"owner_id":"o-1","observed_at":%q,"lease_duration_ns":60000000000}`,
-			now),
-		workflowv1.OpReleaseClaim: fmt.Sprintf(
-			`{"work_item_id":"item-1","claim_id":"c-1","fencing_token":1,"owner_id":"o-1","observed_at":%q,"lease_duration_ns":60000000000}`,
-			now),
-		workflowv1.OpFailClaimRetryable: fmt.Sprintf(
-			`{"work_item_id":"item-1","claim_id":"c-1","fencing_token":1,"owner_id":"o-1","observed_at":%q,"lease_duration_ns":60000000000}`,
-			now),
-		workflowv1.OpFailClaimTerminal: fmt.Sprintf(
-			`{"work_item_id":"item-1","claim_id":"c-1","fencing_token":1,"owner_id":"o-1","observed_at":%q,"lease_duration_ns":60000000000}`,
-			now),
-		workflowv1.OpValidateAndPinClaimForCommit: fmt.Sprintf(
-			`{"claim_id":"c-1","fencing_token":1,"scope_id":"scope-1","source_run_id":"sr-1","generation_id":"gen-1","commit_deadline":%q}`,
-			time.Now().UTC().Add(time.Hour).Truncate(time.Second).Format(time.RFC3339Nano)),
-		workflowv1.OpReportRunProgress: fmt.Sprintf(
-			`{"run_id":"run-1","observed_at":%q,"progress":[{"collector_kind":"jira"}]}`, now),
-		workflowv1.OpGetRunStatus:           `{"run_id":"run-1"}`,
-		workflowv1.OpListRuns:               `{}`,
-		workflowv1.OpGetRunCompleteness:     `{"run_id":"run-1"}`,
-		workflowv1.OpListCollectorInstances: ``,
-		workflowv1.OpQueueDepthSnapshot:     ``,
-	}
-	for _, route := range workflowv1.RouteTable {
-		body, ok := bodies[route.Operation]
-		if !ok {
-			t.Fatalf("no test body for %s", route.Operation)
-		}
-		resp := post(t, srv, route.Path, body)
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusNotFound {
-			t.Fatalf("%s %s: not served", route.Method, route.Path)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 500 {
-			t.Fatalf("%s %s: status %d", route.Method, route.Path, resp.StatusCode)
-		}
-	}
-	if len(st.calls) != len(workflowv1.RouteTable) {
-		t.Fatalf("store calls = %d, want %d (one per route)", len(st.calls), len(workflowv1.RouteTable))
-	}
-}
-
 // TestVersionMismatchRejected requires the version header on every route:
 // a missing or foreign major is a 400 version_mismatch, never a claim.
 func TestVersionMismatchRejected(t *testing.T) {

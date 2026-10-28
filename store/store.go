@@ -7,6 +7,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/eshu-hq/eshu-workflow/internal/telemetry"
 	workflowv1 "github.com/eshu-hq/eshu-workflow/workflowv1"
 )
 
@@ -35,6 +37,9 @@ type Config struct {
 	// per server-hour when the quota statement fails. Non-positive
 	// selects DefaultQuotaFloorGrantsPerHour.
 	QuotaFloorGrantsPerHour int
+	// Logger receives degraded-mode fail-open records. Nil discards;
+	// Configure replaces nil with a discard logger.
+	Logger *slog.Logger
 }
 
 // DefaultQuotaFloorGrantsPerHour bounds degraded-mode grants when quota
@@ -51,6 +56,12 @@ type Store struct {
 	pacing workflowv1.ClaimPacingConfig
 	quotas map[string]int
 	floor  int
+	logger *slog.Logger
+
+	// Instruments records degraded-mode fail-open decisions. Nil
+	// disables counting; the command assigns a registry-backed handle,
+	// mirroring Server.Instruments.
+	Instruments *telemetry.Instruments
 
 	mu          sync.Mutex
 	depthCache  cachedDepths
@@ -84,7 +95,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping claim-plane database: %w", err)
 	}
-	return &Store{pool: pool, floorUsed: map[floorKey]int{}}, nil
+	return &Store{pool: pool, floorUsed: map[floorKey]int{}, logger: slog.New(slog.DiscardHandler)}, nil
 }
 
 // Configure applies claim policy. It must precede serving traffic.
@@ -103,6 +114,7 @@ func (s *Store) Configure(cfg Config) error {
 	if s.floor <= 0 {
 		s.floor = DefaultQuotaFloorGrantsPerHour
 	}
+	s.logger = telemetry.Logger(cfg.Logger)
 	return nil
 }
 
@@ -195,6 +207,13 @@ func (s *Store) DropTableForTest(ctx context.Context, table string) error {
 // proof.
 func (s *Store) ForgetMigrationForTest(ctx context.Context, version string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM schema_migrations WHERE version = $1`, version)
+	return err
+}
+
+// ExecForTest runs one administrative statement. Tests only: it installs
+// and removes the throwing trigger behind latch-write failure proof.
+func (s *Store) ExecForTest(ctx context.Context, sql string) error {
+	_, err := s.pool.Exec(ctx, sql)
 	return err
 }
 

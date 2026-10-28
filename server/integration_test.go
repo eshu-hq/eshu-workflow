@@ -19,6 +19,32 @@ import (
 	workflowv1 "github.com/eshu-hq/eshu-workflow/workflowv1"
 )
 
+// shouldRequireDB reports whether a missing test database must fail the
+// end-to-end test instead of skipping it. CI sets CI=true and operators
+// can force the same with CLAIMPLANE_REQUIRE_DB=1, so a broken database
+// service can never pass vacuously.
+func shouldRequireDB() bool {
+	return os.Getenv("CI") == "true" || os.Getenv("CLAIMPLANE_REQUIRE_DB") == "1"
+}
+
+func TestShouldRequireDB(t *testing.T) {
+	t.Setenv("CI", "true")
+	t.Setenv("CLAIMPLANE_REQUIRE_DB", "")
+	if !shouldRequireDB() {
+		t.Fatalf("CI=true must require the test database")
+	}
+	t.Setenv("CI", "")
+	t.Setenv("CLAIMPLANE_REQUIRE_DB", "1")
+	if !shouldRequireDB() {
+		t.Fatalf("CLAIMPLANE_REQUIRE_DB=1 must require the test database")
+	}
+	t.Setenv("CI", "")
+	t.Setenv("CLAIMPLANE_REQUIRE_DB", "")
+	if shouldRequireDB() {
+		t.Fatalf("unset CI and CLAIMPLANE_REQUIRE_DB must allow the skip")
+	}
+}
+
 func liveStore(t *testing.T) (*claimstore.Store, string) {
 	t.Helper()
 	dsn := os.Getenv("CLAIMPLANE_TEST_DATABASE_URL")
@@ -29,7 +55,10 @@ func liveStore(t *testing.T) (*claimstore.Store, string) {
 	t.Cleanup(cancel)
 	st, err := claimstore.Open(ctx, dsn)
 	if err != nil {
-		t.Skipf("no test database: %v", err)
+		if shouldRequireDB() {
+			t.Fatalf("test database unavailable and CI requires it: %v", err)
+		}
+		t.Skipf("no test database (set CLAIMPLANE_REQUIRE_DB=1 to require it): %v", err)
 	}
 	t.Cleanup(st.Close)
 	if err := st.Migrate(ctx); err != nil {

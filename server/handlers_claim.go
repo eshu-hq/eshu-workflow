@@ -36,13 +36,15 @@ func (srv *Server) serveClaimNext(writer http.ResponseWriter, request *http.Requ
 		srv.fail(inv, operation, err)
 		return
 	}
+	srv.observeDegraded(resp.DegradedReason)
 	if !resp.Issued && resp.Deferral.Signal == "" {
 		// Idle queue: the contract forbids an unissued response without
 		// a deferral, so idleness is a 404, never an empty 200.
 		srv.Instruments.ObserveClaim("idle", "")
 		srv.logger.Info("claim next idle",
 			slog.String("collector_kind", string(body.Selector.CollectorKind)),
-			slog.String("collector_instance_id", body.Selector.CollectorInstanceID))
+			slog.String("collector_instance_id", body.Selector.CollectorInstanceID),
+			slog.String("degraded_reason", resp.DegradedReason))
 		srv.fail(inv, operation, &workflowv1.ProtocolError{
 			Code:    workflowv1.CodeNotFound,
 			Message: "no eligible work",
@@ -57,8 +59,18 @@ func (srv *Server) serveClaimNext(writer http.ResponseWriter, request *http.Requ
 	srv.logger.Info("claim next",
 		slog.String("collector_kind", string(body.Selector.CollectorKind)),
 		slog.String("claim_id", body.Selector.ClaimID),
-		slog.Bool("issued", resp.Issued))
+		slog.Bool("issued", resp.Issued),
+		slog.String("degraded_reason", resp.DegradedReason))
 	srv.answer(inv, operation, resp)
+}
+
+// observeDegraded counts one degraded-mode fail-open answer by reason.
+// Empty reasons are healthy answers and record nothing.
+func (srv *Server) observeDegraded(reason string) {
+	if reason == "" {
+		return
+	}
+	srv.Instruments.ObserveDegraded(reason)
 }
 
 func (srv *Server) serveCheckClaimPacing(writer http.ResponseWriter, request *http.Request) {

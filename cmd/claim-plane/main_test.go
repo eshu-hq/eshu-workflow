@@ -5,17 +5,87 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/eshu-hq/eshu-workflow/internal/telemetry"
+	workflowv1 "github.com/eshu-hq/eshu-workflow/workflowv1"
 )
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stdout, nil))
 }
 
-var _ = context.Background
+// capturedLog records one slog record for tick-path assertions.
+type capturedLog struct {
+	level slog.Level
+	msg   string
+}
+
+// captureHandler collects slog records in memory.
+type captureHandler struct {
+	records *[]capturedLog
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	*h.records = append(*h.records, capturedLog{level: r.Level, msg: r.Message})
+	return nil
+}
+
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *captureHandler) WithGroup(string) slog.Handler { return h }
+
+// fakeReaperStore stands in for the pgx store behind a narrow tick
+// surface: it proves the reaper's error branch and observe calls without
+// a database.
+type fakeReaperStore struct {
+	reapErr      error
+	reaped       []workflowv1.Claim
+	reconcileErr error
+	transitioned int
+	depthErr     error
+	snapshot     workflowv1.QueueDepthSnapshot
+	calls        []string
+}
+
+func (f *fakeReaperStore) Reap(
+	_ context.Context,
+	_ time.Time,
+	_ int,
+	_ time.Duration,
+) ([]workflowv1.Claim, error) {
+	f.calls = append(f.calls, "Reap")
+	if f.reapErr != nil {
+		return nil, f.reapErr
+	}
+	return f.reaped, nil
+}
+
+func (f *fakeReaperStore) ReconcileRuns(_ context.Context, _ time.Time) (int, error) {
+	f.calls = append(f.calls, "ReconcileRuns")
+	if f.reconcileErr != nil {
+		return 0, f.reconcileErr
+	}
+	return f.transitioned, nil
+}
+
+func (f *fakeReaperStore) QueueDepth(_ context.Context, _ time.Time) (workflowv1.QueueDepthSnapshot, error) {
+	f.calls = append(f.calls, "QueueDepth")
+	if f.depthErr != nil {
+		return workflowv1.QueueDepthSnapshot{}, f.depthErr
+	}
+	return f.snapshot, nil
+}
 
 func TestParseQuotas(t *testing.T) {
 	quotas, err := parseQuotas("")
@@ -80,12 +150,70 @@ func TestRunRejectsBadQuotasBeforeDialing(t *testing.T) {
 	}
 }
 
-func TestReaperTickDrainsWithoutWork(t *testing.T) {
-	// The reaper tick against an unreachable store must not panic: it logs
-	// and returns. A nil-pool store cannot be built without a database, so
-	// this test covers the quota parser edge instead: a trailing comma is
-	// rejected rather than silently granting an empty kind.
+func TestParseQuotasRejectsTrailingComma(t *testing.T) {
+	// A trailing comma must be rejected rather than silently granting an
+	// empty kind.
 	if _, err := parseQuotas("jira=10,"); err == nil {
 		t.Fatalf("trailing comma parsed without error")
+	}
+}
+
+// TestReaperTickLogsAndReturnsOnReapError requires a failing reap to log
+// at error level and return before the reconcile and depth stages run.
+func TestReaperTickLogsAndReturnsOnReapError(t *testing.T) {
+	var records []capturedLog
+	logger := slog.New(&captureHandler{records: &records})
+	fake := &fakeReaperStore{reapErr: errors.New("connection reset")}
+	tick := newReaper(fake, telemetry.NewInstruments(prometheus.NewRegistry()), logger,
+		options{reapInterval: time.Minute, reapLimit: 10, requeueDelay: time.Minute})
+	tick.tick(context.Background(), time.Now().UTC())
+	if len(fake.calls) != 1 || fake.calls[0] != "Reap" {
+		t.Fatalf("tick calls = %v, want exactly [Reap]", fake.calls)
+	}
+	for _, rec := range records {
+		if rec.level == slog.LevelError && rec.msg == "reap tick" {
+			return
+		}
+	}
+	t.Fatalf("no error-level %q log in %v", "reap tick", records)
+}
+
+// TestReaperTickObservesReapAndDepth requires a successful tick to record
+// the reaped count and every family depth gauge.
+func TestReaperTickObservesReapAndDepth(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	instruments := telemetry.NewInstruments(registry)
+	fake := &fakeReaperStore{
+		reaped:       []workflowv1.Claim{{ClaimID: "c-1"}, {ClaimID: "c-2"}},
+		transitioned: 1,
+		snapshot: workflowv1.QueueDepthSnapshot{
+			AsOf:          time.Now().UTC(),
+			GlobalPending: 3,
+			GlobalClaimed: 1,
+			Families: []workflowv1.FamilyQueueDepth{{
+				CollectorKind: "jira", Pending: 3, Claimed: 1,
+			}},
+		},
+	}
+	var records []capturedLog
+	tick := newReaper(fake, instruments, slog.New(&captureHandler{records: &records}),
+		options{reapInterval: time.Minute, reapLimit: 10, requeueDelay: time.Minute})
+	tick.tick(context.Background(), time.Now().UTC())
+	wantCalls := []string{"Reap", "ReconcileRuns", "QueueDepth"}
+	if strings.Join(fake.calls, ",") != strings.Join(wantCalls, ",") {
+		t.Fatalf("tick calls = %v, want %v", fake.calls, wantCalls)
+	}
+	expected := `
+# HELP workflow_claim_reaps_total Claims expired by the reaper.
+# TYPE workflow_claim_reaps_total counter
+workflow_claim_reaps_total 2
+# HELP workflow_queue_depth Outstanding work items by family and state.
+# TYPE workflow_queue_depth gauge
+workflow_queue_depth{collector_kind="jira",state="claimed"} 1
+workflow_queue_depth{collector_kind="jira",state="pending"} 3
+`
+	if err := testutil.GatherAndCompare(registry, strings.NewReader(expected),
+		"workflow_claim_reaps_total", "workflow_queue_depth"); err != nil {
+		t.Fatalf("reap/depth metrics mismatch: %v", err)
 	}
 }

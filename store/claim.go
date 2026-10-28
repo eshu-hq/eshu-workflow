@@ -34,9 +34,31 @@ func (s *Store) ClaimNext(
 		leaseTTL = workflowv1.DefaultClaimLeaseTTL()
 	}
 	now = now.UTC()
-	if deferral, paced := s.checkPacing(ctx, now, string(selector.CollectorKind), selector.CollectorInstanceID); paced {
-		return workflowv1.ClaimNextResponse{Deferral: deferral}, nil
+	deferral, paced, degraded := s.checkPacing(ctx, now, string(selector.CollectorKind), selector.CollectorInstanceID)
+	if paced {
+		return workflowv1.ClaimNextResponse{Deferral: deferral, DegradedReason: degraded}, nil
 	}
+	resp, err := s.claimOnce(ctx, selector, now, leaseTTL)
+	if err != nil {
+		return resp, err
+	}
+	// A pacing fail-open still grants through the normal quota or plain
+	// path, so quota enforcement is unchanged: the pacing reason rides
+	// along unless the quota floor already named the deeper failure.
+	if degraded != "" && resp.DegradedReason == "" {
+		resp.DegradedReason = degraded
+	}
+	return resp, nil
+}
+
+// claimOnce grants through the quota-gated statement when the kind has a
+// quota, and through the plain statement otherwise.
+func (s *Store) claimOnce(
+	ctx context.Context,
+	selector workflowv1.ClaimSelector,
+	now time.Time,
+	leaseTTL time.Duration,
+) (workflowv1.ClaimNextResponse, error) {
 	if limit, ok := s.quotas[string(selector.CollectorKind)]; ok {
 		return s.claimNextWithQuota(ctx, selector, now, leaseTTL, limit)
 	}

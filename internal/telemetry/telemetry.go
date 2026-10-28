@@ -48,6 +48,7 @@ type Instruments struct {
 	mutates  *prometheus.CounterVec
 	pins     *prometheus.CounterVec
 	reaps    prometheus.Counter
+	degraded *prometheus.CounterVec
 	depths   *prometheus.GaugeVec
 	registry *prometheus.Registry
 }
@@ -75,13 +76,17 @@ func NewInstruments(reg *prometheus.Registry) *Instruments {
 			Name: "workflow_claim_reaps_total",
 			Help: "Claims expired by the reaper.",
 		}),
+		degraded: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "workflow_claim_degraded_total",
+			Help: "Degraded-mode fail-open decisions by reason.",
+		}, []string{"reason"}),
 		depths: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "workflow_queue_depth",
 			Help: "Outstanding work items by family and state.",
 		}, []string{"collector_kind", "state"}),
 		registry: reg,
 	}
-	reg.MustRegister(ins.claims, ins.mutates, ins.pins, ins.reaps, ins.depths)
+	reg.MustRegister(ins.claims, ins.mutates, ins.pins, ins.reaps, ins.degraded, ins.depths)
 	return ins
 }
 
@@ -124,6 +129,15 @@ func (ins *Instruments) ObserveReap(count int) {
 		return
 	}
 	ins.reaps.Add(float64(count))
+}
+
+// ObserveDegraded records one degraded-mode fail-open decision by reason
+// (pacing_depths, pacing_latch_read, pacing_latch_advance, quota_floor).
+func (ins *Instruments) ObserveDegraded(reason string) {
+	if ins == nil {
+		return
+	}
+	ins.degraded.WithLabelValues(reason).Inc()
 }
 
 // ObserveDepth sets one family depth gauge.

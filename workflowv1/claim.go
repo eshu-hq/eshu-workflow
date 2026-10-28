@@ -155,6 +155,12 @@ type ClaimNextResponse struct {
 	Issued   bool                `json:"issued"`
 	Grant    ClaimedWorkItem     `json:"grant,omitempty"`
 	Deferral ClaimPacingDeferral `json:"deferral,omitempty"`
+	// DegradedReason names a degraded-mode fail-open decision behind
+	// this answer (pacing_depths, pacing_latch_read,
+	// pacing_latch_advance, quota_floor), or empty when the claim path
+	// was healthy. Server-only: it is never serialized, so the wire
+	// contract is unchanged.
+	DegradedReason string `json:"-"`
 }
 
 // Validate checks that the response is exactly one outcome.

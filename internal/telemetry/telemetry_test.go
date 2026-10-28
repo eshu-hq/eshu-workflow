@@ -19,6 +19,7 @@ func TestNilInstrumentsAreNoOps(t *testing.T) {
 	ins.ObserveMutation("HeartbeatClaim", "ok")
 	ins.ObservePin("pinned")
 	ins.ObserveReap(3)
+	ins.ObserveDegraded("quota_floor")
 	ins.ObserveDepth("jira", "pending", 7)
 	if ins.Registry() != nil {
 		t.Fatalf("nil instruments registry is not nil")
@@ -35,15 +36,19 @@ func TestCountersIncrement(t *testing.T) {
 	ins.ObserveMutation("CompleteClaim", "ok")
 	ins.ObservePin("pinned")
 	ins.ObserveReap(2)
+	ins.ObserveDegraded("quota_floor")
 	ins.ObserveDepth("jira", "pending", 7)
 	expected := `
 # HELP workflow_claim_grants_total ClaimNext outcomes by result: issued, deferred, idle, or error.
 # TYPE workflow_claim_grants_total counter
 workflow_claim_grants_total{result="issued",signal=""} 1
 workflow_claim_grants_total{result="deferred",signal="domain"} 1
+# HELP workflow_claim_degraded_total Degraded-mode fail-open decisions by reason.
+# TYPE workflow_claim_degraded_total counter
+workflow_claim_degraded_total{reason="quota_floor"} 1
 `
 	if err := testutil.GatherAndCompare(ins.Registry(), strings.NewReader(expected),
-		"workflow_claim_grants_total"); err != nil {
+		"workflow_claim_grants_total", "workflow_claim_degraded_total"); err != nil {
 		t.Fatalf("grants mismatch: %v", err)
 	}
 }

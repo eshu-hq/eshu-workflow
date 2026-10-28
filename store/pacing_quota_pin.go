@@ -6,38 +6,71 @@ package claimstore
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	workflowv1 "github.com/eshu-hq/eshu-workflow/workflowv1"
 )
 
+// Degradation reasons reported on fail-open claim paths. The reason rides
+// the response to the server for logging and counting; it never reaches
+// the wire body.
+const (
+	degradedPacingDepths       = "pacing_depths"
+	degradedPacingLatchRead    = "pacing_latch_read"
+	degradedPacingLatchAdvance = "pacing_latch_advance"
+	degradedQuotaFloor         = "quota_floor"
+)
+
+// degraded records one fail-open decision: a structured warn log carrying
+// the cause plus a counter bump by reason. Claiming stays open; only the
+// silence is removed. Instruments is nil-safe, so unconfigured stores
+// still log.
+func (s *Store) degraded(reason string, cause error, attrs ...any) {
+	args := append([]any{
+		slog.String("reason", reason),
+		slog.String("error", cause.Error()),
+	}, attrs...)
+	s.logger.Warn("claim-plane degraded", args...)
+	if s.Instruments != nil {
+		s.Instruments.ObserveDegraded(reason)
+	}
+}
+
 // checkPacing evaluates the shared hysteresis latch for one claim attempt.
-// It returns the deferral and true when the grant must wait. The latch row
-// stays authoritative in storage and is always read fresh; only the depth
-// numbers may lag by DepthCacheTTL.
+// It returns the deferral and true when the grant must wait. Storage
+// failures fail open to a deferral-free pass and report the reason: depth
+// reads must never wedge claiming, so the degradation — not an error —
+// rides back for the response while the cause lands in logs and metrics.
+// The latch row stays authoritative in storage and is always read fresh;
+// only the depth numbers may lag by DepthCacheTTL.
 func (s *Store) checkPacing(
 	ctx context.Context,
 	now time.Time,
 	kind, instance string,
-) (workflowv1.ClaimPacingDeferral, bool) {
+) (workflowv1.ClaimPacingDeferral, bool, string) {
 	if !s.pacing.Enabled() {
-		return workflowv1.ClaimPacingDeferral{}, false
+		return workflowv1.ClaimPacingDeferral{}, false, ""
 	}
 	domain := kind + "/" + instance
 	depths, err := s.cachedDepths(ctx, now, kind, instance)
 	if err != nil {
-		// Depth reads must never wedge claiming: fail open with a loud
-		// deferral-free pass and let the error surface in logs/metrics.
-		// The caller logs; here pacing degrades to disengaged.
-		return workflowv1.ClaimPacingDeferral{}, false
+		s.degraded(degradedPacingDepths, err,
+			slog.String("collector_kind", kind),
+			slog.String("collector_instance_id", instance))
+		return workflowv1.ClaimPacingDeferral{}, false, degradedPacingDepths
 	}
+	degraded := ""
 	for _, signal := range []workflowv1.ClaimPacingSignal{
 		workflowv1.ClaimPacingSignalDomain,
 		workflowv1.ClaimPacingSignalGlobal,
 	} {
 		latch, err := s.readLatch(ctx, signal, domainFor(signal, domain))
 		if err != nil {
-			return workflowv1.ClaimPacingDeferral{}, false
+			s.degraded(degradedPacingLatchRead, err,
+				slog.String("signal", string(signal)),
+				slog.String("domain", domain))
+			return workflowv1.ClaimPacingDeferral{}, false, degradedPacingLatchRead
 		}
 		var engagedFor time.Duration
 		if latch.Engaged && latch.EngagedAt != nil {
@@ -48,18 +81,28 @@ func (s *Store) checkPacing(
 			Signal:  latch.Signal,
 		}, engagedFor)
 		if !decision.Paced {
-			s.advanceLatch(ctx, now, signal, domainFor(signal, domain), false)
+			if err := s.advanceLatch(ctx, now, signal, domainFor(signal, domain), false); err != nil {
+				s.degraded(degradedPacingLatchAdvance, err,
+					slog.String("signal", string(signal)),
+					slog.String("domain", domain))
+				degraded = degradedPacingLatchAdvance
+			}
 			continue
 		}
-		s.advanceLatch(ctx, now, signal, domainFor(signal, domain), true)
+		if err := s.advanceLatch(ctx, now, signal, domainFor(signal, domain), true); err != nil {
+			s.degraded(degradedPacingLatchAdvance, err,
+				slog.String("signal", string(signal)),
+				slog.String("domain", domain))
+			degraded = degradedPacingLatchAdvance
+		}
 		return workflowv1.ClaimPacingDeferral{
 			Signal:     decision.Signal,
 			Domain:     domainForDeferral(decision.Signal, domain),
 			RetryAfter: decision.RetryAfter,
 			Stuck:      decision.Stuck,
-		}, true
+		}, true, degraded
 	}
-	return workflowv1.ClaimPacingDeferral{}, false
+	return workflowv1.ClaimPacingDeferral{}, false, degraded
 }
 
 func domainFor(signal workflowv1.ClaimPacingSignal, domain string) string {
@@ -104,15 +147,18 @@ func errNoRows(err error) bool {
 	return err != nil && err.Error() == "no rows in result set"
 }
 
+// advanceLatch persists the hysteresis latch. A write failure never
+// wedges claiming: the error returns to checkPacing, which logs and
+// counts the degradation and keeps the previous latch state.
 func (s *Store) advanceLatch(
 	ctx context.Context,
 	now time.Time,
 	signal workflowv1.ClaimPacingSignal,
 	domain string,
 	engaged bool,
-) {
+) error {
 	if engaged {
-		_, _ = s.pool.Exec(ctx, `INSERT INTO workflow_claim_pacing
+		_, err := s.pool.Exec(ctx, `INSERT INTO workflow_claim_pacing
 (signal, domain, engaged, engaged_at, updated_at)
 VALUES ($1, $2, TRUE, COALESCE((SELECT engaged_at FROM workflow_claim_pacing
 WHERE signal = $1 AND domain = $2), $3), $3)
@@ -121,14 +167,21 @@ SET engaged = TRUE,
     engaged_at = COALESCE(workflow_claim_pacing.engaged_at, EXCLUDED.engaged_at),
     updated_at = EXCLUDED.updated_at`,
 			string(signal), domain, now)
-		return
+		if err != nil {
+			return fmt.Errorf("engage pacing latch: %w", err)
+		}
+		return nil
 	}
-	_, _ = s.pool.Exec(ctx, `INSERT INTO workflow_claim_pacing
+	_, err := s.pool.Exec(ctx, `INSERT INTO workflow_claim_pacing
 (signal, domain, engaged, engaged_at, updated_at)
 VALUES ($1, $2, FALSE, NULL, $3)
 ON CONFLICT (signal, domain) DO UPDATE
 SET engaged = FALSE, engaged_at = NULL, updated_at = EXCLUDED.updated_at`,
 		string(signal), domain, now)
+	if err != nil {
+		return fmt.Errorf("release pacing latch: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) cachedDepths(
@@ -272,8 +325,11 @@ func (s *Store) quotaThrottled(
 
 // claimWithFloor is the degraded-mode path: when the quota statement
 // itself fails, grants continue bounded by an in-memory per-component
-// hourly budget instead of wedging the family. The floor is deliberately
-// local to one server: it bounds damage, it never grants authority.
+// hourly budget instead of wedging the family. Entry logs and counts the
+// quota cause, and every non-error answer carries the quota_floor reason
+// so the server can tell floor grants from quota grants. The floor is
+// deliberately local to one server: it bounds damage, it never grants
+// authority.
 func (s *Store) claimWithFloor(
 	ctx context.Context,
 	selector workflowv1.ClaimSelector,
@@ -281,6 +337,9 @@ func (s *Store) claimWithFloor(
 	leaseTTL time.Duration,
 	cause error,
 ) (workflowv1.ClaimNextResponse, error) {
+	s.degraded(degradedQuotaFloor, cause,
+		slog.String("collector_kind", string(selector.CollectorKind)),
+		slog.String("collector_instance_id", selector.CollectorInstanceID))
 	window := now.Truncate(time.Hour)
 	key := floorKey{component: string(selector.CollectorKind), window: window}
 	s.mu.Lock()
@@ -291,12 +350,15 @@ func (s *Store) claimWithFloor(
 	used := s.floorUsed[key]
 	if used >= s.floor {
 		s.mu.Unlock()
-		return workflowv1.ClaimNextResponse{Deferral: workflowv1.ClaimPacingDeferral{
-			Signal:     workflowv1.ClaimPacingSignalDomain,
-			Domain:     string(selector.CollectorKind) + "/" + selector.CollectorInstanceID,
-			RetryAfter: window.Add(time.Hour).Sub(now),
-			Stuck:      true,
-		}}, nil
+		return workflowv1.ClaimNextResponse{
+			Deferral: workflowv1.ClaimPacingDeferral{
+				Signal:     workflowv1.ClaimPacingSignalDomain,
+				Domain:     string(selector.CollectorKind) + "/" + selector.CollectorInstanceID,
+				RetryAfter: window.Add(time.Hour).Sub(now),
+				Stuck:      true,
+			},
+			DegradedReason: degradedQuotaFloor,
+		}, nil
 	}
 	s.floorUsed[key] = used + 1
 	s.mu.Unlock()
@@ -314,9 +376,9 @@ func (s *Store) claimWithFloor(
 			fmt.Errorf("quota-gated claim failed (%v) and floor claim failed: %w", cause, err)
 	}
 	if grant == nil {
-		return workflowv1.ClaimNextResponse{}, nil
+		return workflowv1.ClaimNextResponse{DegradedReason: degradedQuotaFloor}, nil
 	}
-	return workflowv1.ClaimNextResponse{Issued: true, Grant: *grant}, nil
+	return workflowv1.ClaimNextResponse{Issued: true, Grant: *grant, DegradedReason: degradedQuotaFloor}, nil
 }
 
 // PinForCommit pins a live claim for a fact commit: the reaper must not
