@@ -124,6 +124,18 @@ jobs:
     if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: claimplane_test
+          POSTGRES_PASSWORD: claimplane_test
+          POSTGRES_DB: claimplane_test_store
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U claimplane_test"
+          --health-interval=5s --health-timeout=5s --health-retries=5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -131,6 +143,8 @@ jobs:
           go-version-file: go.mod
       - name: build
         run: go build ./...
+      - name: create server test database
+        run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_server;'
       - name: test
         run: go test ./... -count=1
 
@@ -141,11 +155,25 @@ jobs:
     timeout-minutes: 15
     env:
       COVERAGE_FLOOR: "70.0"
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: claimplane_test
+          POSTGRES_PASSWORD: claimplane_test
+          POSTGRES_DB: claimplane_test_store
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U claimplane_test"
+          --health-interval=5s --health-timeout=5s --health-retries=5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: create server test database
+        run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_server;'
       - name: race + coverprofile
         run: go test ./... -race -count=1 -covermode=atomic -coverprofile=coverage.out
       - name: coverage totals
