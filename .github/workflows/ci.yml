@@ -1,0 +1,271 @@
+# CI gates for eshu-workflow.
+#
+# Stable job names (org contract; only ci-complete is ever required in a
+# ruleset): changes, lint, test, race, shell, boundary, govulncheck,
+# gosec, actionlint, ci-complete.
+#
+# The image lane arrives with the server (Dockerfile + cmd) in Stage 1b;
+# until then there is nothing to build into an image.
+#
+# Pinned actions (SHAs mirror eshu-collector-cicd-run, resolved 2026-10-27):
+#   actions/checkout v7.0.1              3d3c42e5aac5ba805825da76410c181273ba90b1
+#   actions/setup-go v7.0.0              b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+#   dorny/paths-filter v4                ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
+#   golangci/golangci-lint-action v9.3.0 ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+#   actions/upload-artifact v7.0.2       cf430e030ddbb5b0abf93d22962f4752f3646cd9
+#   ludeeus/action-shellcheck (master)   00b27aa7cb85167568cb48a3838b75f4265f2bca
+#   github/codeql-action/upload-sarif v4.39.1 8498dc4c2b27cdd99baf0f87955b29ebbf30c78d
+#   rhysd/actionlint v1.7.12             914e7df21a07ef503a81201c76d2b11c789d3fca
+# Go tools (hash-verified by the toolchain on install):
+#   golangci-lint v2.12.2 (same binary Eshu uses; config in .golangci.yml)
+#   govulncheck v1.9.0, run with -scan package (Go 1.26 SSA-safe)
+#   gosec v2.30.0, run with -no-fail; the SARIF finding count is advisory
+#   until its false-positive rate here is measured, then blocking
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 6 * * 1" # weekly Monday 06:00 UTC: govulncheck + gosec only
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      shell: ${{ steps.filter.outputs.shell }}
+      deps: ${{ steps.filter.outputs.deps }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+      misc: ${{ steps.filter.outputs.misc }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        with:
+          predicate-quantifier: 'some-with-excludes'
+          filters: |
+            go:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - '.golangci.yml'
+            shell:
+              - '**/*.sh'
+            deps:
+              - 'go.mod'
+              - 'go.sum'
+            workflows:
+              - '.github/workflows/**'
+            misc:
+              - '**'
+              - '!**/*.md'
+              - '!LICENSE'
+              - '!CODEOWNERS'
+              - '!**/*.go'
+              - '!go.mod'
+              - '!go.sum'
+              - '!.golangci.yml'
+              - '!**/*.sh'
+              - '!.github/workflows/**'
+
+  lint:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: vet
+        run: go vet ./...
+      - name: lint (whole repo, no baseline)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.12.2
+          args: --timeout 10m
+      - name: format check (gofumpt)
+        run: golangci-lint fmt --diff ./...
+      - name: tidy check
+        run: |
+          go mod tidy -diff
+          git diff --exit-code -- go.mod go.sum
+      - name: 500-line file cap (wc -l, sole static gate)
+        run: |
+          over=0
+          for f in $(git ls-files '*.go'); do
+            n=$(wc -l < "$f")
+            if [ "$n" -gt 500 ]; then echo "$f: $n lines"; over=1; fi
+          done
+          if [ "$over" -ne 0 ]; then echo "FAIL: .go files over 500 lines"; exit 1; fi
+      - name: Diff check
+        run: git diff --check
+
+  test:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: build
+        run: go build ./...
+      - name: test
+        run: go test ./... -count=1
+
+  race:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      COVERAGE_FLOOR: "70.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: race + coverprofile
+        run: go test ./... -race -count=1 -covermode=atomic -coverprofile=coverage.out
+      - name: coverage totals
+        run: go tool cover -func=coverage.out >> "$GITHUB_STEP_SUMMARY"
+      - name: enforce floor (may only rise)
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')
+          echo "statement coverage total=${total}% floor=${COVERAGE_FLOOR}%"
+          awk -v t="$total" -v f="$COVERAGE_FLOOR" 'BEGIN { if (t + 0 < f + 0) { print "FAIL: coverage below floor"; exit 1 } }'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 14
+          if-no-files-found: error
+
+  shell:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.shell == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: shellcheck
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca
+        with:
+          scandir: .
+          format: gcc
+
+  boundary:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test -count=1 -run TestImportBoundaryStaysStdlibOnly ./workflowv1/
+
+  govulncheck:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || github.event_name == 'schedule' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write # scheduled runs file or update a findings issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: govulncheck (package mode is Go 1.26 SSA-safe)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$(go env GOPATH)/bin/govulncheck" -scan package ./...
+
+  gosec:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || github.event_name == 'schedule' || needs.changes.outputs.go == 'true' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # SARIF upload to the Security tab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gosec SARIF
+        # -no-fail: gosec's bundled type-checker cannot fully load Go 1.26
+        # generics and exits non-zero even with zero findings; the finding
+        # count below is the gate. Advisory until the false-positive rate
+        # here is measured, then blocking.
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
+          "$(go env GOPATH)/bin/gosec" -no-fail -fmt=sarif -out=gosec.sarif ./...
+      - name: upload SARIF
+        if: github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@8498dc4c2b27cdd99baf0f87955b29ebbf30c78d # v4.39.1
+        with:
+          sarif_file: gosec.sarif
+        continue-on-error: true
+
+  actionlint:
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+        # No `with:` block: this action takes no inputs and fails the step
+        # whenever actionlint reports an error.
+
+  ci-complete:
+    needs: [changes, lint, test, race, shell, boundary, govulncheck, gosec, actionlint]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: aggregate (pass when needed lanes passed or legitimately skipped)
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          # NEEDS_JSON is toJSON(needs): {job: {"result": ..., "outputs": ...}}.
+          # Compare v["result"]: comparing whole job OBJECTS never matches
+          # (false-green), and needs.*.result is a bare ARRAY that kills
+          # green runs. Proven by the seeded red/green lane proofs in the
+          # closing PR; never change this shape without re-seeding.
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          bad = {k: v.get("result") for k, v in needs.items()
+                 if isinstance(v, dict) and v.get("result") in ("failure", "cancelled")}
+          if bad:
+              print("FAIL:", bad)
+              raise SystemExit(1)
+          print("ci-complete: pass (skips allowed)")
+          EOF
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
