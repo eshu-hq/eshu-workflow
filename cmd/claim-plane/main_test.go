@@ -150,6 +150,16 @@ func TestRunRejectsBadQuotasBeforeDialing(t *testing.T) {
 	}
 }
 
+func TestVersionFlagSkipsDatabaseRequirement(t *testing.T) {
+	opts, err := parseFlags([]string{"--version"})
+	if err != nil {
+		t.Fatalf("parse --version: %v", err)
+	}
+	if !opts.showVersion {
+		t.Fatal("showVersion = false, want true")
+	}
+}
+
 func TestParseQuotasRejectsTrailingComma(t *testing.T) {
 	// A trailing comma must be rejected rather than silently granting an
 	// empty kind.

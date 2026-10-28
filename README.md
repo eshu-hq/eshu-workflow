@@ -28,7 +28,7 @@ blank.
 
 ## Claim-plane server
 
-`cmd/claim-plane` serves the 14 protocol routes over its own Postgres
+`cmd/claim-plane` serves the 20 protocol routes over its own Postgres
 database (`store`, pgx, fresh-install migrations in
 `store/migrations`). Heartbeat and complete enforce fencing only: the
 in-tree tenant-grant join is gone because grant tables stay core-owned
@@ -42,6 +42,35 @@ CLAIMPLANE_DATABASE_URL='postgres://user:pass@localhost:5432/claimplane?sslmode=
   go run ./cmd/claim-plane --listen :8080 --admin-listen :8081
 ```
 
+## Coordinator service
+
+`cmd/workflow-coordinator` runs the ported coordinator: instance
+reconciliation plus, in active mode with claims enabled, family
+planning and admission through the claim-plane HTTP API. It holds no
+database handle. Instances declare their planned targets in the
+`targets` list of their configuration document:
+
+```json
+[
+  {
+    "instance_id": "jira-primary",
+    "collector_kind": "jira",
+    "mode": "scheduled",
+    "enabled": true,
+    "claims_enabled": true,
+    "configuration": "{\"targets\":[{\"scope_id\":\"scope-a\"}]}"
+  }
+]
+```
+
+```sh
+go run ./cmd/workflow-coordinator \
+  --claim-plane-url http://localhost:8080 \
+  --admin-listen :8082 \
+  --deployment-mode active --claims-enabled \
+  --instances-file instances.json
+```
+
 Tests need Postgres: `CLAIMPLANE_TEST_DATABASE_URL` overrides the
 per-package default databases (`claimplane_test_store`,
 `claimplane_test_server`).
@@ -50,7 +79,7 @@ per-package default databases (`claimplane_test_store`,
 
 - [x] Stage 1a: protocol contract (`workflowv1`) with tests and CI.
 - [x] Stage 1b: claim-plane server with its own database and migrations.
-- [ ] Stage 1c: coordinator service port (planners, scheduling, report/read planes).
+- [x] Stage 1c: coordinator service port (planners, scheduling, report/read planes).
 - [ ] Core client, extracted-path parity, ops-qa deploy, rollback
       rehearsal, production acceptance, in-tree removal.
 

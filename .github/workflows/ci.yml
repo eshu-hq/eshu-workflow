@@ -145,6 +145,8 @@ jobs:
         run: go build ./...
       - name: create server test database
         run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_server;'
+      - name: create coordinator test database
+        run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_coordinator;'
       - name: test
         run: go test ./... -count=1
 
@@ -174,6 +176,8 @@ jobs:
           go-version-file: go.mod
       - name: create server test database
         run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_server;'
+      - name: create coordinator test database
+        run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_coordinator;'
       - name: race + coverprofile
         run: go test ./... -race -count=1 -covermode=atomic -coverprofile=coverage.out
       - name: coverage totals

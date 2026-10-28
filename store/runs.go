@@ -56,31 +56,35 @@ func rfc3339OrEmpty(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
-// Enqueue inserts work items in batches. Conflict rows are skipped: enqueue
-// is idempotent on work_item_id, so an ambiguous-timeout replay of the same
-// batch lands nothing twice.
-func (s *Store) Enqueue(ctx context.Context, items []workflowv1.WorkItem) error {
+// Enqueue inserts work items in batches and reports how many rows the
+// table actually took. Conflict rows are skipped: enqueue is idempotent
+// on work_item_id, so an ambiguous-timeout replay of the same batch lands
+// nothing twice and reports zero inserts.
+func (s *Store) Enqueue(ctx context.Context, items []workflowv1.WorkItem) (int, error) {
 	for i := range items {
 		if err := items[i].Validate(); err != nil {
-			return staleAsInvalid(fmt.Errorf("enqueue item %d: %w", i, err))
+			return 0, staleAsInvalid(fmt.Errorf("enqueue item %d: %w", i, err))
 		}
 	}
 	const batch = 250
+	inserted := 0
 	for start := 0; start < len(items); start += batch {
 		end := start + batch
 		if end > len(items) {
 			end = len(items)
 		}
-		if err := s.enqueueBatch(ctx, items[start:end]); err != nil {
-			return err
+		took, err := s.enqueueBatch(ctx, items[start:end])
+		if err != nil {
+			return inserted, err
 		}
+		inserted += took
 	}
-	return nil
+	return inserted, nil
 }
 
-func (s *Store) enqueueBatch(ctx context.Context, items []workflowv1.WorkItem) error {
+func (s *Store) enqueueBatch(ctx context.Context, items []workflowv1.WorkItem) (int, error) {
 	if len(items) == 0 {
-		return nil
+		return 0, nil
 	}
 	cols := []string{
 		"work_item_id", "run_id", "collector_kind", "collector_instance_id",
@@ -120,10 +124,11 @@ func (s *Store) enqueueBatch(ctx context.Context, items []workflowv1.WorkItem) e
 		args = append(args, row...)
 	}
 	query += " ON CONFLICT DO NOTHING"
-	if _, err := s.pool.Exec(ctx, query, args...); err != nil {
-		return fmt.Errorf("enqueue work items: %w", err)
+	tag, err := s.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue work items: %w", err)
 	}
-	return nil
+	return int(tag.RowsAffected()), nil
 }
 
 func joinCols(cols []string) string {

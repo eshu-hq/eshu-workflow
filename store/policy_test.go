@@ -47,7 +47,7 @@ func TestQuotaBlocksThirdGrantInScope(t *testing.T) {
 	for i := range items {
 		items[i].ScopeID = "scope-shared"
 	}
-	if err := st.Enqueue(ctx, items); err != nil {
+	if _, err := st.Enqueue(ctx, items); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	claimOne(t, ctx, st, "claim-q0", "owner-q0", time.Minute)
@@ -89,7 +89,7 @@ func TestPacingDefersOverHighWater(t *testing.T) {
 		t.Fatalf("configure: %v", err)
 	}
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{
 		seedItem(runID, "pace-0", false),
 		seedItem(runID, "pace-1", false),
 	}); err != nil {

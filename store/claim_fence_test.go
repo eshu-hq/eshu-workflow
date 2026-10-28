@@ -16,7 +16,7 @@ import (
 func TestStaleFenceAfterRelease(t *testing.T) {
 	st, ctx := openFreshStore(t)
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "fence-0", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "fence-0", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 
@@ -51,7 +51,7 @@ func TestStaleFenceAfterRelease(t *testing.T) {
 func TestAmbiguousTimeoutReplay(t *testing.T) {
 	st, ctx := openFreshStore(t)
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{
 		seedItem(runID, "replay-hb", false),
 		seedItem(runID, "replay-complete", false),
 		seedItem(runID, "replay-release", false),
@@ -126,7 +126,7 @@ func TestAmbiguousTimeoutReplay(t *testing.T) {
 func TestPinBlocksReaper(t *testing.T) {
 	st, ctx := openFreshStore(t)
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "pin-0", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "pin-0", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	grant := claimOne(t, ctx, st, "claim-pin-reap", "owner-pin-reap", 50*time.Millisecond)
@@ -167,7 +167,7 @@ func TestPinBlocksReaper(t *testing.T) {
 func TestTenantScopedMutationsNeedNoGrantJoin(t *testing.T) {
 	st, ctx := openFreshStore(t)
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "tenant-0", true)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "tenant-0", true)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	grant := claimOne(t, ctx, st, "claim-tenant", "owner-tenant", time.Minute)

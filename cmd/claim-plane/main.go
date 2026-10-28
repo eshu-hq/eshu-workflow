@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 eshu-hq
 
-// Command claim-plane serves the workflow claim plane: 14 protocol routes
+// Command claim-plane serves the workflow claim plane: 20 protocol routes
 // over one Postgres database, with an internal reaper and an admin
 // listener for health and metrics.
 package main
@@ -37,6 +37,7 @@ type options struct {
 	requeueDelay time.Duration
 	quotas       string
 	pacing       workflowv1.ClaimPacingConfig
+	showVersion  bool
 }
 
 func parseFlags(args []string) (options, error) {
@@ -56,8 +57,12 @@ func parseFlags(args []string) (options, error) {
 	fs.DurationVar(&opts.pacing.GrantDelay, "pacing-grant-delay", 0, "backoff carried on paced grants")
 	fs.DurationVar(&opts.pacing.MaxEngagement, "pacing-max-engagement", 0, "engagement bound before stuck raises")
 	fs.DurationVar(&opts.pacing.DepthCacheTTL, "pacing-depth-cache-ttl", 0, "depth observation reuse window")
+	fs.BoolVar(&opts.showVersion, "version", false, "print the binary version and exit")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
+	}
+	if opts.showVersion {
+		return opts, nil
 	}
 	if opts.databaseURL == "" {
 		return opts, fmt.Errorf("database URL is required (--database-url or CLAIMPLANE_DATABASE_URL)")
@@ -267,6 +272,10 @@ func main() {
 	if err != nil {
 		logger.Error("flag parse", slog.String("error", err.Error()))
 		os.Exit(2)
+	}
+	if opts.showVersion {
+		fmt.Printf("claim-plane %d\n", workflowv1.ProtocolVersion)
+		return
 	}
 	if err := run(context.Background(), logger, opts); err != nil {
 		logger.Error("claim-plane failed", slog.String("error", err.Error()))

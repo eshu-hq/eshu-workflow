@@ -123,7 +123,7 @@ func TestQuotaFloorSurfacesCause(t *testing.T) {
 	cfg := newTestConfig(t, map[string]int{"jira": 2})
 	st, ctx, records, registry := degradedStore(t, cfg)
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "floor-cause-0", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "floor-cause-0", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	if err := st.DropTableForTest(ctx, "component_quota_windows"); err != nil {
@@ -157,7 +157,7 @@ func TestPacingLatchReadFailureFailsOpenWithSignal(t *testing.T) {
 	cfg := newTestConfig(t, nil)
 	st, ctx, records, registry := degradedStore(t, cfg)
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "latch-read-0", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "latch-read-0", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	if err := st.DropTableForTest(ctx, "workflow_claim_pacing"); err != nil {
@@ -192,7 +192,7 @@ func TestPacingLatchAdvanceFailureSurfacesExecError(t *testing.T) {
 	cfg := newTestConfig(t, nil)
 	st, ctx, records, registry := degradedStore(t, cfg)
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "latch-advance-0", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "latch-advance-0", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	if err := st.ExecForTest(ctx, `CREATE OR REPLACE FUNCTION pacing_break() RETURNS trigger AS
