@@ -20,11 +20,14 @@ import (
 
 // fakeStore implements server.ClaimStore in memory for handler tests.
 type fakeStore struct {
-	claimErr error
-	pinResp  workflowv1.CommitPinResponse
-	paced    bool
-	idle     bool
-	calls    []string
+	claimErr     error
+	pinResp      workflowv1.CommitPinResponse
+	paced        bool
+	idle         bool
+	calls        []string
+	transitioned int
+	reaped       []workflowv1.Claim
+	inserted     int
 }
 
 func (f *fakeStore) note(op string) {
@@ -117,6 +120,45 @@ func (f *fakeStore) CheckPacing(
 ) (workflowv1.ClaimPacingDecision, error) {
 	f.note("CheckPacing")
 	return workflowv1.ClaimPacingDecision{}, f.claimErr
+}
+
+func (f *fakeStore) CreateRun(_ context.Context, _ workflowv1.Run) error {
+	f.note("CreateRun")
+	return f.claimErr
+}
+
+func (f *fakeStore) Enqueue(_ context.Context, _ []workflowv1.WorkItem) (int, error) {
+	f.note("Enqueue")
+	return f.inserted, f.claimErr
+}
+
+func (f *fakeStore) ReconcileInstances(
+	_ context.Context,
+	_ time.Time,
+	_ []workflowv1.DesiredCollectorInstance,
+) error {
+	f.note("ReconcileInstances")
+	return f.claimErr
+}
+
+func (f *fakeStore) UpsertCompleteness(_ context.Context, _ []workflowv1.CompletenessState) error {
+	f.note("UpsertCompleteness")
+	return f.claimErr
+}
+
+func (f *fakeStore) ReconcileRuns(_ context.Context, _ time.Time) (int, error) {
+	f.note("ReconcileRuns")
+	return f.transitioned, f.claimErr
+}
+
+func (f *fakeStore) Reap(
+	_ context.Context,
+	_ time.Time,
+	_ int,
+	_ time.Duration,
+) ([]workflowv1.Claim, error) {
+	f.note("Reap")
+	return f.reaped, f.claimErr
 }
 
 func (f *fakeStore) ReportProgress(_ context.Context, _ workflowv1.ReportRunProgressRequest) error {

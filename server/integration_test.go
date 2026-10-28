@@ -120,7 +120,7 @@ func TestEndToEndClaimLifecycleOverHTTP(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{{
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{{
 		WorkItemID: "e2e-item", RunID: runID,
 		CollectorKind: "jira", CollectorInstanceID: "jira-primary",
 		SourceSystem: "jira", ScopeID: "scope-e2e",

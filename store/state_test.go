@@ -65,7 +65,7 @@ func TestRunLifecycle(t *testing.T) {
 	}
 	// A run with live work stays open.
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "live-0", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "live-0", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	moved, err = st.ReconcileRuns(ctx, now)
@@ -177,7 +177,7 @@ func TestInstanceAndCompleteness(t *testing.T) {
 func TestClaimAliasesAndTerminalFail(t *testing.T) {
 	st, ctx := openFreshStore(t)
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{
 		seedItem(runID, "alias-0", false),
 		seedItem(runID, "alias-1", false),
 	}); err != nil {
@@ -231,7 +231,7 @@ func TestQuotaFloorGrantsWhenQuotaStateUnreadable(t *testing.T) {
 		t.Fatalf("configure: %v", err)
 	}
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "floor-0", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "floor-0", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	if err := st.DropTableForTest(ctx, "component_quota_windows"); err != nil {
@@ -265,7 +265,7 @@ func TestPacingProbeReadsVerdict(t *testing.T) {
 		t.Fatalf("configure: %v", err)
 	}
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "probe-0", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "probe-0", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	probe, err := st.CheckPacing(ctx, "jira", "jira-primary", time.Now().UTC())
@@ -275,7 +275,7 @@ func TestPacingProbeReadsVerdict(t *testing.T) {
 	if probe.Paced {
 		t.Fatalf("probe paced below the high watermark")
 	}
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "probe-1", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "probe-1", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	probe, err = st.CheckPacing(ctx, "jira", "jira-primary", time.Now().UTC())

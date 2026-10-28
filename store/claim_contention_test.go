@@ -23,7 +23,7 @@ func TestClaimContentionGrantsEachItemOnce(t *testing.T) {
 	for i := range 4 {
 		items = append(items, seedItem(runID, fmt.Sprintf("contention-%d", i), false))
 	}
-	if err := st.Enqueue(ctx, items); err != nil {
+	if _, err := st.Enqueue(ctx, items); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestClaimContentionGrantsEachItemOnce(t *testing.T) {
 func TestReclaimAfterExpiry(t *testing.T) {
 	st, ctx := openFreshStore(t)
 	runID := seedRun(t, ctx, st)
-	if err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "reclaim-0", false)}); err != nil {
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "reclaim-0", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 

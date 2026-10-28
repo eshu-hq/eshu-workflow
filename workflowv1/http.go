@@ -17,6 +17,15 @@ const (
 	OpFailClaimRetryable           Operation = "FailClaimRetryable"
 	OpFailClaimTerminal            Operation = "FailClaimTerminal"
 	OpValidateAndPinClaimForCommit Operation = "ValidateAndPinClaimForCommit"
+	// Control plane: the coordinator seams. Each resolves a method the
+	// claim-plane client used to reject with ErrClaimPlaneUnsupported to
+	// a real route served from the service's own database.
+	OpCreateRun                   Operation = "CreateRun"
+	OpEnqueueWorkItems            Operation = "EnqueueWorkItems"
+	OpReconcileCollectorInstances Operation = "ReconcileCollectorInstances"
+	OpUpsertCompletenessStates    Operation = "UpsertCompletenessStates"
+	OpReconcileWorkflowRuns       Operation = "ReconcileWorkflowRuns"
+	OpReapExpiredClaims           Operation = "ReapExpiredClaims"
 	// Report plane.
 	OpReportRunProgress Operation = "ReportRunProgress"
 	// Read plane.
@@ -46,6 +55,12 @@ var RouteTable = []Route{
 	{OpFailClaimRetryable, "POST", "/workflow.v1/FailClaimRetryable"},
 	{OpFailClaimTerminal, "POST", "/workflow.v1/FailClaimTerminal"},
 	{OpValidateAndPinClaimForCommit, "POST", "/workflow.v1/ValidateAndPinClaimForCommit"},
+	{OpCreateRun, "POST", "/workflow.v1/CreateRun"},
+	{OpEnqueueWorkItems, "POST", "/workflow.v1/EnqueueWorkItems"},
+	{OpReconcileCollectorInstances, "POST", "/workflow.v1/ReconcileCollectorInstances"},
+	{OpUpsertCompletenessStates, "POST", "/workflow.v1/UpsertCompletenessStates"},
+	{OpReconcileWorkflowRuns, "POST", "/workflow.v1/ReconcileWorkflowRuns"},
+	{OpReapExpiredClaims, "POST", "/workflow.v1/ReapExpiredClaims"},
 	{OpReportRunProgress, "POST", "/workflow.v1/ReportRunProgress"},
 	{OpGetRunStatus, "POST", "/workflow.v1/GetRunStatus"},
 	{OpListRuns, "POST", "/workflow.v1/ListRuns"},

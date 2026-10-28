@@ -29,6 +29,16 @@ type ClaimStore interface {
 	FailRetryable(ctx context.Context, mutation workflowv1.ClaimMutation) error
 	FailTerminal(ctx context.Context, mutation workflowv1.ClaimMutation) error
 	PinForCommit(ctx context.Context, req workflowv1.CommitPinRequest) (workflowv1.CommitPinResponse, error)
+	// Control plane: the coordinator seams, served from the service's
+	// own database. Handler names differ from store method names
+	// (CreateRun served by CreateRun, ReconcileCollectorInstances by
+	// ReconcileInstances), so the routes-served test pins identity.
+	CreateRun(ctx context.Context, run workflowv1.Run) error
+	Enqueue(ctx context.Context, items []workflowv1.WorkItem) (int, error)
+	ReconcileInstances(ctx context.Context, now time.Time, desired []workflowv1.DesiredCollectorInstance) error
+	UpsertCompleteness(ctx context.Context, states []workflowv1.CompletenessState) error
+	ReconcileRuns(ctx context.Context, now time.Time) (int, error)
+	Reap(ctx context.Context, asOf time.Time, limit int, requeueDelay time.Duration) ([]workflowv1.Claim, error)
 	CheckPacing(ctx context.Context, kind, instance string, now time.Time) (workflowv1.ClaimPacingDecision, error)
 	ReportProgress(ctx context.Context, req workflowv1.ReportRunProgressRequest) error
 	GetRunStatus(ctx context.Context, runID string, now time.Time) (workflowv1.GetRunStatusResponse, error)
@@ -38,7 +48,8 @@ type ClaimStore interface {
 	QueueDepth(ctx context.Context, now time.Time) (workflowv1.QueueDepthSnapshot, error)
 }
 
-// Server serves the 14 merged workflowv1 routes.
+// Server serves the 20 merged workflowv1 routes: the claim plane, the six
+// control-plane coordinator seams, the report plane, and the read plane.
 type Server struct {
 	store       ClaimStore
 	logger      *slog.Logger
@@ -61,6 +72,12 @@ func New(store ClaimStore, logger *slog.Logger) (*Server, error) {
 	srv.mux.HandleFunc("POST /workflow.v1/FailClaimRetryable", srv.serveFailRetryable)
 	srv.mux.HandleFunc("POST /workflow.v1/FailClaimTerminal", srv.serveFailTerminal)
 	srv.mux.HandleFunc("POST /workflow.v1/ValidateAndPinClaimForCommit", srv.servePin)
+	srv.mux.HandleFunc("POST /workflow.v1/CreateRun", srv.serveCreateRun)
+	srv.mux.HandleFunc("POST /workflow.v1/EnqueueWorkItems", srv.serveEnqueueWorkItems)
+	srv.mux.HandleFunc("POST /workflow.v1/ReconcileCollectorInstances", srv.serveReconcileCollectorInstances)
+	srv.mux.HandleFunc("POST /workflow.v1/UpsertCompletenessStates", srv.serveUpsertCompletenessStates)
+	srv.mux.HandleFunc("POST /workflow.v1/ReconcileWorkflowRuns", srv.serveReconcileWorkflowRuns)
+	srv.mux.HandleFunc("POST /workflow.v1/ReapExpiredClaims", srv.serveReapExpiredClaims)
 	srv.mux.HandleFunc("POST /workflow.v1/ReportRunProgress", srv.serveReportProgress)
 	srv.mux.HandleFunc("POST /workflow.v1/GetRunStatus", srv.serveGetRunStatus)
 	srv.mux.HandleFunc("POST /workflow.v1/ListRuns", srv.serveListRuns)

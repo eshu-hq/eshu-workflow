@@ -44,6 +44,20 @@ func TestAllRoutesAreServed(t *testing.T) {
 		workflowv1.OpValidateAndPinClaimForCommit: fmt.Sprintf(
 			`{"claim_id":"c-1","fencing_token":1,"scope_id":"scope-1","source_run_id":"sr-1","generation_id":"gen-1","commit_deadline":%q}`,
 			time.Now().UTC().Add(time.Hour).Truncate(time.Second).Format(time.RFC3339Nano)),
+		workflowv1.OpCreateRun: fmt.Sprintf(
+			`{"run":{"run_id":"run-1","trigger_kind":"schedule","status":"collection_active","created_at":%q,"updated_at":%q}}`,
+			now, now),
+		workflowv1.OpEnqueueWorkItems: fmt.Sprintf(
+			`{"items":[{"work_item_id":"item-1","run_id":"run-1","collector_kind":"jira","collector_instance_id":"i-1","source_system":"jira","scope_id":"scope-1","acceptance_unit_id":"au-1","source_run_id":"sr-1","generation_id":"gen-1","status":"pending","created_at":%q,"updated_at":%q}]}`,
+			now, now),
+		workflowv1.OpReconcileCollectorInstances: fmt.Sprintf(
+			`{"observed_at":%q,"instances":[{"instance_id":"i-1","collector_kind":"jira","mode":"manual"}]}`, now),
+		workflowv1.OpUpsertCompletenessStates: fmt.Sprintf(
+			`{"states":[{"run_id":"run-1","collector_kind":"jira","keyspace":"facts","phase_name":"publish","status":"complete","observed_at":%q,"updated_at":%q}]}`,
+			now, now),
+		workflowv1.OpReconcileWorkflowRuns: fmt.Sprintf(`{"observed_at":%q}`, now),
+		workflowv1.OpReapExpiredClaims: fmt.Sprintf(
+			`{"observed_at":%q,"limit":10,"requeue_delay_ns":60000000000}`, now),
 		workflowv1.OpReportRunProgress: fmt.Sprintf(
 			`{"run_id":"run-1","observed_at":%q,"progress":[{"collector_kind":"jira"}]}`, now),
 		workflowv1.OpGetRunStatus:           `{"run_id":"run-1"}`,
@@ -65,6 +79,12 @@ func TestAllRoutesAreServed(t *testing.T) {
 		workflowv1.OpFailClaimRetryable:           "FailRetryable",
 		workflowv1.OpFailClaimTerminal:            "FailTerminal",
 		workflowv1.OpValidateAndPinClaimForCommit: "PinForCommit",
+		workflowv1.OpCreateRun:                    "CreateRun",
+		workflowv1.OpEnqueueWorkItems:             "Enqueue",
+		workflowv1.OpReconcileCollectorInstances:  "ReconcileInstances",
+		workflowv1.OpUpsertCompletenessStates:     "UpsertCompleteness",
+		workflowv1.OpReconcileWorkflowRuns:        "ReconcileRuns",
+		workflowv1.OpReapExpiredClaims:            "Reap",
 		workflowv1.OpReportRunProgress:            "ReportProgress",
 		workflowv1.OpGetRunStatus:                 "GetRunStatus",
 		workflowv1.OpListRuns:                     "ListRuns",
