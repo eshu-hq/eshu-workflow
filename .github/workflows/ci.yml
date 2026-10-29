@@ -15,7 +15,8 @@
 #   golangci/golangci-lint-action v9.3.0 ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
 #   actions/upload-artifact v7.0.2       cf430e030ddbb5b0abf93d22962f4752f3646cd9
 #   ludeeus/action-shellcheck (master)   00b27aa7cb85167568cb48a3838b75f4265f2bca
-#   github/codeql-action/upload-sarif v4.39.1 8498dc4c2b27cdd99baf0f87955b29ebbf30c78d
+#   github/codeql-action/upload-sarif v4.39.1 9b3254085494b55a0f7c4c2b3d2d52cc712ce370
+#   (peeled commit; the annotated tag object is 8498dc4c2b27cdd99baf0f87955b29ebbf30c78d)
 #   rhysd/actionlint v1.7.12             914e7df21a07ef503a81201c76d2b11c789d3fca
 # Go tools (hash-verified by the toolchain on install):
 #   golangci-lint v2.12.2 (same binary Eshu uses; config in .golangci.yml)
@@ -288,7 +289,7 @@ jobs:
           "$(go env GOPATH)/bin/gosec" -no-fail -fmt=sarif -out=gosec.sarif ./...
       - name: upload SARIF
         if: github.event_name != 'pull_request'
-        uses: github/codeql-action/upload-sarif@8498dc4c2b27cdd99baf0f87955b29ebbf30c78d # v4.39.1
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: gosec.sarif
         continue-on-error: true
