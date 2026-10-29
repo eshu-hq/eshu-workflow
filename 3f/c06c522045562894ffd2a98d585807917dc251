@@ -1,0 +1,18 @@
+Makefile
+  h_78a442cba0b3e6 8
+cmd/workflow-coordinator/main.go
+  h_78a442cba0b3e6 178-183,191,194,197-198,202,204
+cmd/workflow-coordinator/main_test.go
+  h_78a442cba0b3e6 7-11,14,85-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3fc06c522045562894ffd2a98d585807917dc251",
+  "prompts": {},
+  "humans": {
+    "h_78a442cba0b3e6": {
+      "author": "Allen Sanabria <asanabria6910@gmail.com>"
+    }
+  }
+}
