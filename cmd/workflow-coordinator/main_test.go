@@ -4,8 +4,14 @@
 package main
 
 import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -74,5 +80,80 @@ func TestInstancesFileLoads(t *testing.T) {
 	}
 	if instances, err := loadInstances(""); err != nil || instances != nil {
 		t.Fatalf("empty path = %v, %v, want nil, nil", instances, err)
+	}
+}
+
+func TestRunMainVersionPrintsAndExitsZero(t *testing.T) {
+	out, err := os.CreateTemp(t.TempDir(), "version-*.txt")
+	if err != nil {
+		t.Fatalf("temp version output: %v", err)
+	}
+	defer func() { _ = out.Close() }()
+	if code := runMain([]string{"--version"}, out); code != 0 {
+		t.Fatalf("runMain --version = %d, want 0", code)
+	}
+	_ = out.Close()
+	raw, err := os.ReadFile(out.Name())
+	if err != nil {
+		t.Fatalf("read version output: %v", err)
+	}
+	if !strings.Contains(string(raw), "workflow-coordinator") {
+		t.Fatalf("version output %q lacks the binary name", raw)
+	}
+}
+
+func TestRunMainBadFlagExitsTwo(t *testing.T) {
+	out, err := os.CreateTemp(t.TempDir(), "usage-*.txt")
+	if err != nil {
+		t.Fatalf("temp usage output: %v", err)
+	}
+	defer func() { _ = out.Close() }()
+	if code := runMain([]string{"--no-such-flag"}, out); code != 2 {
+		t.Fatalf("runMain bad flag = %d, want 2", code)
+	}
+}
+
+func TestRunMainMissingURLExitsTwo(t *testing.T) {
+	t.Setenv("WORKFLOW_COORDINATOR_CLAIM_PLANE_URL", "")
+	out, err := os.CreateTemp(t.TempDir(), "missing-*.txt")
+	if err != nil {
+		t.Fatalf("temp output: %v", err)
+	}
+	defer func() { _ = out.Close() }()
+	// A missing URL fails flag validation, the same exit path as a bad flag.
+	if code := runMain([]string{}, out); code != 2 {
+		t.Fatalf("runMain without URL = %d, want 2", code)
+	}
+}
+
+func TestRunMainBadPlaneURLExitsOne(t *testing.T) {
+	t.Setenv("WORKFLOW_COORDINATOR_CLAIM_PLANE_URL", "")
+	out, err := os.CreateTemp(t.TempDir(), "badplane-*.txt")
+	if err != nil {
+		t.Fatalf("temp output: %v", err)
+	}
+	defer func() { _ = out.Close() }()
+	// A non-empty but unparsable URL passes flag validation, then run fails
+	// building the claim-plane client.
+	if code := runMain([]string{"--claim-plane-url", "://bad-url"}, out); code != 1 {
+		t.Fatalf("runMain bad plane URL = %d, want 1", code)
+	}
+}
+
+func TestRunDarkModeEndsWithCanceledContext(t *testing.T) {
+	plane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer plane.Close()
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := run(ctx, logger, options{
+		claimPlaneURL:  plane.URL,
+		adminListen:    "127.0.0.1:0",
+		deploymentMode: "dark",
+	})
+	if err == nil || !strings.Contains(err.Error(), context.Canceled.Error()) {
+		t.Fatalf("run with canceled context = %v, want context canceled", err)
 	}
 }

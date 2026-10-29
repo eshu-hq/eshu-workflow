@@ -175,6 +175,12 @@ func run(ctx context.Context, logger *slog.Logger, opts options) error {
 }
 
 func main() {
+	os.Exit(runMain(os.Args[1:], os.Stdout))
+}
+
+// runMain is the testable seam behind main: it returns the process exit
+// code instead of exiting so tests can drive every branch.
+func runMain(args []string, stdout *os.File) int {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	shutdown := telemetry.InstallLogExporter(logger)
 	defer func() {
@@ -182,17 +188,18 @@ func main() {
 		defer cancel()
 		_ = shutdown(ctx)
 	}()
-	opts, err := parseFlags(os.Args[1:])
+	opts, err := parseFlags(args)
 	if err != nil {
 		logger.Error("flag parse", slog.String("error", err.Error()))
-		os.Exit(2)
+		return 2
 	}
 	if opts.showVersion {
-		fmt.Printf("%s %d\n", versionName, workflowv1.ProtocolVersion)
-		return
+		fmt.Fprintf(stdout, "%s %d\n", versionName, workflowv1.ProtocolVersion)
+		return 0
 	}
 	if err := run(context.Background(), logger, opts); err != nil {
 		logger.Error("workflow-coordinator failed", slog.String("error", err.Error()))
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
