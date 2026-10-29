@@ -210,4 +210,17 @@ func TestRunMainSuccessExitsZero(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("runMain did not exit within 15s of SIGTERM")
 	}
+	// The success path writes nothing to the output stream (only
+	// --version writes there; run logs go to the process stdout via
+	// slog). A non-empty file means the run leaked failure output.
+	if err := out.Close(); err != nil {
+		t.Fatalf("close success output: %v", err)
+	}
+	raw, err := os.ReadFile(out.Name())
+	if err != nil {
+		t.Fatalf("read success output: %v", err)
+	}
+	if len(raw) != 0 {
+		t.Fatalf("runMain success wrote %d bytes to output, want empty: %q", len(raw), raw)
+	}
 }
