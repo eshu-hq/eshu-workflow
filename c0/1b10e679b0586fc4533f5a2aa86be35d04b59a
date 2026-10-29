@@ -1,0 +1,14 @@
+cmd/workflow-coordinator/main_test.go
+  h_78a442cba0b3e6 8,16,19-20,104-106,165-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c01b10e679b0586fc4533f5a2aa86be35d04b59a",
+  "prompts": {},
+  "humans": {
+    "h_78a442cba0b3e6": {
+      "author": "Allen Sanabria <asanabria6910@gmail.com>"
+    }
+  }
+}
