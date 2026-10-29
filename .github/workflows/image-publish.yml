@@ -8,10 +8,10 @@
 # GOARCH=amd64 for the same reason (#8868).
 #
 # Docker action versions mirror the monolith docker-publish.yml (proven):
-#   docker/setup-buildx-action v3
-#   docker/login-action v3
-#   docker/metadata-action v5
-#   docker/build-push-action v5
+#   docker/setup-buildx-action v4
+#   docker/login-action v4
+#   docker/metadata-action v6
+#   docker/build-push-action v7
 
 name: image-publish
 
