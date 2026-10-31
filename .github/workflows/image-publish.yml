@@ -1,4 +1,6 @@
-# Publishes the workflow service image to GHCR when main advances.
+# Publishes the workflow service image to GHCR on every push to main and on
+# every version-tag push. Nothing runs on a pull request, and nothing here
+# deploys.
 #
 # Registry choice: ghcr.io/eshu-hq, the same convention as the monolith
 # image ghcr.io/eshu-hq/eshu. No ECR convention exists for the satellite
@@ -7,11 +9,21 @@
 # Only linux/amd64 is built: EKS nodes are amd64, and the Dockerfile pins
 # GOARCH=amd64 for the same reason (#8868).
 #
+# Pushes to main publish the moving :main and :latest tags plus an
+# immutable :sha-<long-sha> tag. A version tag publishes exactly that tag,
+# after the semver and main-head guards pass; those guards run only on tag
+# events. There is no manifest.yaml in this repo, so no manifest-version
+# guard exists here. Main-branch images get the same provenance, cosign,
+# SBOM, and attestation hardening as tag images.
+#
 # Docker action versions mirror the monolith docker-publish.yml (proven):
 #   docker/setup-buildx-action v4
 #   docker/login-action v4
 #   docker/metadata-action v6
 #   docker/build-push-action v7
+# Those pins stay on their majors. The provenance/cosign/SBOM/attestation
+# steps are new here, so they use the SHA pins copied from the
+# eshu-collector-tempo release template.
 
 name: image-publish
 
@@ -19,13 +31,8 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'Dockerfile'
-      - '.dockerignore'
-      - 'go.mod'
-      - 'go.sum'
-      - '**/*.go'
-      - '.github/workflows/image-publish.yml'
+    tags:
+      - "v[0-9]*"
   workflow_dispatch:
 
 permissions:
@@ -42,15 +49,37 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: eshu-hq/eshu-workflow
+      TAG_NAME: ${{ github.ref_name }}
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
+      - name: Require a semantic version tag
+        if: github.ref_type == 'tag'
+        run: |
+          if ! printf '%s' "${TAG_NAME}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "tag '${TAG_NAME}' is not vMAJOR.MINOR.PATCH[-prerelease]" >&2
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - name: Require the tag to point at the protected main head
+        if: github.ref_type == 'tag'
+        env:
+          TAG_COMMIT: ${{ github.sha }}
+        run: |
+          git fetch origin main --quiet
+          main_head="$(git rev-parse origin/main)"
+          if [[ "${TAG_COMMIT}" != "${main_head}" ]]; then
+            echo "tag '${TAG_NAME}' points at ${TAG_COMMIT}, not the protected main head ${main_head}" >&2
+            exit 1
+          fi
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
@@ -59,13 +88,23 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Extract metadata
-        id: meta
+      - name: Extract tag image metadata
+        id: meta-tag
+        if: github.ref_type == 'tag'
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=tag
+      - name: Extract branch image metadata
+        id: meta-branch
+        if: github.ref_type == 'branch'
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=main
+            type=raw,value=latest
             type=sha,prefix=sha-,format=long
       - name: Build and push
         id: build
@@ -75,8 +114,58 @@ jobs:
           file: ./Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ steps.meta-tag.outputs.tags }}
+            ${{ steps.meta-branch.outputs.tags }}
+          labels: |
+            ${{ steps.meta-tag.outputs.labels }}
+            ${{ steps.meta-branch.outputs.labels }}
       - name: Record digest
         run: |
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Generate build provenance attestation
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign the image
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_REF}"
+      - name: Verify the image signature
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          cosign verify "${IMAGE_REF}" \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Generate the image SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: eshu-workflow.spdx.json
+          upload-artifact: true
+          upload-release-assets: false
+      - name: Generate the SBOM attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: eshu-workflow.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: Verify the image attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OCI_IMAGE_REF: oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          gh attestation verify "${OCI_IMAGE_REF}" \
+            -R "${GITHUB_REPOSITORY}"
+          gh attestation verify "${OCI_IMAGE_REF}" \
+            -R "${GITHUB_REPOSITORY}" \
+            --predicate-type https://spdx.dev/Document/v2.3
