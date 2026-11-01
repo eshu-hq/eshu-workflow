@@ -5,6 +5,8 @@ package telemetry_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -68,4 +70,18 @@ func TestLogExporterInstallAndShutdown(t *testing.T) {
 		t.Fatalf("shutdown: %v", err)
 	}
 	_ = ctx
+}
+
+func TestLoggerDefaultsToDiscardAndKeepsExplicitLogger(t *testing.T) {
+	discard := telemetry.Logger(nil)
+	if discard == nil {
+		t.Fatal("nil logger input returned a nil logger")
+	}
+	// Writing through the default must be safe and silent.
+	discard.Info("nothing listens", "k", "v")
+
+	explicit := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if got := telemetry.Logger(explicit); got != explicit {
+		t.Fatal("an explicit logger was replaced")
+	}
 }

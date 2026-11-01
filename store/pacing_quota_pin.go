@@ -5,9 +5,12 @@ package claimstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	workflowv1 "github.com/eshu-hq/eshu-workflow/workflowv1"
 )
@@ -141,10 +144,10 @@ FROM workflow_claim_pacing WHERE signal = $1 AND domain = $2`, string(signal), d
 	return latch, nil
 }
 
-// errNoRows reports a missing row without importing driver internals at
-// the call site.
+// errNoRows reports a missing row. It matches the driver sentinel rather
+// than its message text, so a driver wording change cannot flip it.
 func errNoRows(err error) bool {
-	return err != nil && err.Error() == "no rows in result set"
+	return errors.Is(err, pgx.ErrNoRows)
 }
 
 // advanceLatch persists the hysteresis latch. A write failure never

@@ -173,18 +173,29 @@ func run(ctx context.Context, logger *slog.Logger, opts options) error {
 		errCh <- nil
 	}()
 
-	<-ctx.Done()
+	// A listener that fails to bind reports on errCh before any signal; stop
+	// the other listener and the reaper instead of idling half-up.
+	var firstErr error
+	received := 0
+	select {
+	case <-ctx.Done():
+	case err := <-errCh:
+		received++
+		firstErr = err
+		logger.Error("listener exited before shutdown", slog.Any("error", err))
+		stop()
+	}
 	logger.Info("shutdown started")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = protocol.Shutdown(shutdownCtx)
 	_ = admin.Shutdown(shutdownCtx)
-	for range 2 {
-		if err := <-errCh; err != nil {
-			return err
+	for ; received < 2; received++ {
+		if err := <-errCh; err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // reaperStore is the narrow tick surface the reaper needs: expiring
@@ -261,6 +272,12 @@ func (r *reaper) tick(ctx context.Context, now time.Time) {
 }
 
 func main() {
+	os.Exit(runMain(os.Args[1:], os.Stdout))
+}
+
+// runMain is the testable seam behind main: it returns the process exit
+// code instead of exiting so tests can drive every branch.
+func runMain(args []string, stdout *os.File) int {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	shutdown := telemetry.InstallLogExporter(logger)
 	defer func() {
@@ -268,17 +285,18 @@ func main() {
 		defer cancel()
 		_ = shutdown(ctx)
 	}()
-	opts, err := parseFlags(os.Args[1:])
+	opts, err := parseFlags(args)
 	if err != nil {
 		logger.Error("flag parse", slog.String("error", err.Error()))
-		os.Exit(2)
+		return 2
 	}
 	if opts.showVersion {
-		fmt.Printf("claim-plane %d\n", workflowv1.ProtocolVersion)
-		return
+		fmt.Fprintf(stdout, "claim-plane %d\n", workflowv1.ProtocolVersion)
+		return 0
 	}
 	if err := run(context.Background(), logger, opts); err != nil {
 		logger.Error("claim-plane failed", slog.String("error", err.Error()))
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
