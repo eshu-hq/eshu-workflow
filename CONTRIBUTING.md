@@ -15,6 +15,15 @@ the `claimplane_test` role and the `claimplane_test_store`,
 (see the `test`/`race` jobs in `.github/workflows/ci.yml`). The suite
 fails rather than skips when the database is missing under `CI=true`.
 
+`scripts/workflow-seed-matrix.sh` is a local seeded RED/GREEN check of
+those gates, not a CI gate. For vet, lint, format, race, tidy (an unused
+require and a go.mod-only reorder), the 500-line cap, and the coverage
+floor, it plants a defect, asserts the lane command (and the matching
+`make lint` / `make race` recipe) fails and names the seed, removes the
+seed, asserts the lane is green again, and leaves the tree as found. Run
+it with `bash scripts/workflow-seed-matrix.sh` after changing a lane, the
+Makefile, or `ci.yml`; it needs Postgres like the race suite.
+
 ## CI lanes
 
 Job names are frozen because branch protection requires `ci-complete`:
