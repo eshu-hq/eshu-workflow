@@ -34,3 +34,5 @@ COPY --from=build /out/workflow-coordinator /workflow-coordinator
 USER nonroot:nonroot
 EXPOSE 8080 8081 8082
 ENTRYPOINT ["/claim-plane"]
+
+# lane-selection proof, do not merge
