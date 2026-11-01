@@ -4,7 +4,9 @@
 #
 # Registry choice: ghcr.io/eshu-hq, the same convention as the monolith
 # image ghcr.io/eshu-hq/eshu. No ECR convention exists for the satellite
-# repos, so ghcr.io stays the default until one is decided.
+# repos, so ghcr.io stays the default until one is decided. IMAGE_NAME is
+# ${{ github.repository }} like the sibling repos, which resolves to
+# eshu-hq/eshu-workflow here; no image name is hardcoded.
 #
 # Only linux/amd64 is built: EKS nodes are amd64, and the Dockerfile pins
 # GOARCH=amd64 for the same reason (#8868).
@@ -53,7 +55,7 @@ jobs:
       attestations: write
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: eshu-hq/eshu-workflow
+      IMAGE_NAME: ${{ github.repository }}
       TAG_NAME: ${{ github.ref_name }}
     outputs:
       digest: ${{ steps.build.outputs.digest }}
