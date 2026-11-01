@@ -19,3 +19,5 @@
 // protocol change while any reader fails the read. CollectorKind stays an
 // open identifier because collector families grow independently.
 package workflowv1
+
+// fork-pr lane proof, do not merge
