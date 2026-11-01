@@ -1,5 +1,6 @@
 # Local parity for the CI lanes lint/test/race. CI adds shell, boundary,
-# govulncheck, gosec, and actionlint; see .github/workflows/ci.yml.
+# govulncheck, gosec, and actionlint; see .github/workflows/ci.yml
+# (lane bodies come from the pinned eshu-hq/.github reusable).
 # Needs: go (version in go.mod), golangci-lint v2.12.2 (same binary Eshu
 # uses), git (for the 500-line cap file list).
 #

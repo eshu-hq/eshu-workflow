@@ -11,13 +11,14 @@
 # seed is also run through the matching `make lint` / `make race` recipe, so a
 # Makefile recipe that swallows a failure shows up as a FAIL here.
 #
-# Lane commands are the exact steps of the lint and race jobs in
-# .github/workflows/ci.yml (and the Makefile recipes `make ci` runs). One
-# deliberate substitution: the lane checks write the race profile to the temp
-# dir. The floor checks run `make race`, which enforces the Makefile floor; the
-# script requires it to equal the floor in ci.yml. The test, boundary, shell,
-# image, govulncheck, gosec, actionlint and ci-complete lanes are not reseeded,
-# and the `git diff --check` step of the lint job is not seeded.
+# Lane commands are the exact steps of the lint and race lanes that
+# .github/workflows/ci.yml runs through the pinned eshu-hq/.github reusable
+# (go-collector-ci.yml; mirrored from its lint and race jobs), and the
+# Makefile recipes `make ci` runs. One deliberate substitution: the lane
+# checks write the race profile to the temp dir. The floor checks run
+# `make race`, which enforces the Makefile floor; the script requires it to
+# equal the coverage-floor input in ci.yml. The test, boundary, shell, image,
+# govulncheck, gosec, actionlint and ci-complete lanes are not reseeded.
 #
 # Seed .go files live in workflowv1/ (package workflowv1, stdlib-only imports
 # so the import-boundary test stays green). The cleanup trap removes them on
@@ -113,28 +114,25 @@ green() {
 	fi
 }
 
-# --- lane commands, verbatim from the lint and race jobs of ci.yml ---
+# --- lane commands, mirrored from the reusable lint and race jobs ---
 lane_vet() { go vet ./...; }
-lane_lint() { golangci-lint run ./... --timeout 10m; }
+lane_lint() { golangci-lint run ./...; }
 lane_format() { golangci-lint fmt --diff ./...; }
 lane_race() { go test ./... -race -count=1 -covermode=atomic -coverprofile="$PROFILE"; }
 lane_tidy_diff() { go mod tidy -diff; }
 lane_tidy() {
-	# ci.yml runs these under bash -e; inside the `if` that calls a lane errexit
+	# The reusable runs these under bash -e; inside the `if` that calls a lane errexit
 	# is off, so chain each step explicitly.
 	go mod tidy -diff || return 1
 	git diff --exit-code -- go.mod go.sum || return 1
 }
 lane_cap() {
-	local over=0 f n
-	for f in $(git ls-files '*.go'); do
-		n=$(wc -l <"$f")
-		if [ "$n" -gt 500 ]; then
-			echo "$f: $n lines"
-			over=1
-		fi
-	done
-	if [ "$over" -ne 0 ]; then
+	# Same find/awk pipeline as the reusable's lint job (it scans the tree, not
+	# `git ls-files`; the Makefile recipe still reads `git ls-files`).
+	local over
+	over=$(find . -name '*.go' -not -path './vendor/*' -exec wc -l {} + | awk '$1 > 500 && $2 != "total" {print}')
+	if [ -n "$over" ]; then
+		echo "$over"
 		echo "FAIL: .go files over 500 lines"
 		return 1
 	fi
@@ -232,8 +230,9 @@ restore_mod
 green "make lint GREEN after the drift is removed" make lint
 
 # --- 500-line cap: a 501-line .go file trips the lane's wc step ---
-# Both ci.yml and the Makefile read `git ls-files`, so the seed is added
-# intent-to-add; the cleanup trap and the step below drop it from the index.
+# The Makefile recipe reads `git ls-files` (the reusable scans the tree), so
+# the seed is added intent-to-add; the cleanup trap and the step below drop it
+# from the index.
 {
 	echo "package workflowv1"
 	echo ""
@@ -252,7 +251,7 @@ green "cap GREEN after seed removal" lane_cap
 
 # --- coverage floor: `make race` enforces the Makefile floor ---
 mk_floor=$(sed -n 's/^COVERAGE_FLOOR ?= \([0-9.]*\).*/\1/p' Makefile | head -n 1)
-ci_floor=$(sed -n 's/^ *COVERAGE_FLOOR: "\{0,1\}\([0-9.]*\)"\{0,1\}.*/\1/p' .github/workflows/ci.yml | head -n 1)
+ci_floor=$(sed -n 's/^ *coverage-floor: \([0-9.]*\).*/\1/p' .github/workflows/ci.yml | head -n 1)
 red "floor RED at 100" "FAIL: coverage below floor" make race COVERAGE_FLOOR=100
 if [ -z "$mk_floor" ] || [ "$mk_floor" != "$ci_floor" ]; then
 	echo "makefile floor='$mk_floor' ci.yml floor='$ci_floor'" >"$LOG"
