@@ -14,6 +14,13 @@ linters:
     - unused
     - errcheck
 
+  # Reason: org-standard presets, byte-identical across the satellite repos
+  # (decision record: eshu-hq/eshu-collector-vulnerability-intelligence#14;
+  # local tracking: #25). They silence only golangci's documented
+  # std-error-handling and common-false-positives noise. The lint lane
+  # proves zero findings outside these two documented classes; re-validate
+  # the classes themselves by running golangci-lint with presets disabled.
+  # Keep the presets byte-identical; do not diverge per-repo.
   exclusions:
     presets:
       - std-error-handling
