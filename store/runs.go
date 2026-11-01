@@ -192,6 +192,13 @@ func (s *Store) ListRuns(ctx context.Context, req workflowv1.ListRunsRequest) (w
 	if err := req.Validate(); err != nil {
 		return workflowv1.ListRunsResponse{}, staleAsInvalid(err)
 	}
+	if req.Cursor != "" && cursorTime(req.Cursor) == nil {
+		// An unparsable cursor would bind NULL and match no rows, which a
+		// pager reads as end-of-list. Fail it as invalid instead.
+		return workflowv1.ListRunsResponse{}, &workflowv1.ProtocolError{
+			Code: workflowv1.CodeInvalid, Message: "cursor is not a valid page token",
+		}
+	}
 	limit := req.EffectiveLimit()
 	rows, err := s.pool.Query(ctx, `SELECT run_id, trigger_kind, status,
 requested_scope_set::text, requested_collector, created_at, updated_at, finished_at
