@@ -88,3 +88,5 @@ per-package default databases (`claimplane_test_store`,
 ```sh
 make ci   # lint + test + race with coverage floor
 ```
+
+<!-- lane-selection proof, do not merge -->
