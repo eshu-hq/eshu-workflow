@@ -1,28 +1,76 @@
 # CI gates for eshu-workflow.
 #
-# Stable job names (org contract; only ci-complete is ever required in a
-# ruleset): changes, lint, test, race, shell, boundary, image,
-# govulncheck, gosec, actionlint, ci-complete.
+# Thin caller: a `changes` job classifies paths, a `lanes` job runs the
+# shared lane bodies inside the pinned eshu-hq/.github reusable, and
+# `ci-complete` aggregates. `ci-complete` is the ONLY context a ruleset
+# requires (org contract). The effective lane set inside `lanes` is lint,
+# test, race, shell, boundary, image, govulncheck, gosec, actionlint; the
+# inner names appear as `lanes / <lane>`.
 #
-# The image lane builds the service image (Dockerfile + cmd) without
-# pushing. Publication to ghcr.io lives in image-publish.yml, which runs
-# on push to main and tags the immutable digest ops-qa deploys pin.
+# Lane bodies come from
+# eshu-hq/.github/.github/workflows/go-collector-ci.yml pinned to the merge
+# commit of the opt-in Postgres bootstrap (eshu-hq/.github#12, "v2+postgres";
+# the commit SHA, never a mutable tag). Each run-* input below keys on the
+# same path classes the retired inline lane used in its `if:`.
+# `changes` has no `if:` guard on purpose: every lane needs it, so skipping
+# it on a schedule run would skip every lane.
 #
-# Pinned actions (SHAs mirror eshu-collector-cicd-run, resolved 2026-10-27):
+# Kept in this repo, not in the reusable (passed as inputs):
+# - Postgres: the test and race lanes bootstrap postgres:18 from the
+#   postgres-* inputs (role/password claimplane_test, database
+#   claimplane_test_store, plus claimplane_test_server and
+#   claimplane_test_coordinator created after the server is ready). The
+#   suite fails rather than skips without it under CI=true.
+# - boundary: boundary-command is the stdlib-only import gate.
+# - image: image-tag/image-context build ./Dockerfile without pushing;
+#   image-command re-proves every Dockerfile FROM is digest-pinned.
+#   Publication to ghcr.io lives in image-publish.yml, which runs on push to
+#   main and tags the immutable digest ops-qa deploys pin.
+#
+# Accepted deltas of the move (documented, not silent):
+# - The `git diff --check` step of the old lint job is gone (the reusable
+#   has no equivalent hook).
+# - golangci-lint is installed with `go install` at the same version
+#   instead of golangci-lint-action v9.3.0: no action cache, and no
+#   `--timeout 10m` (golangci-lint v2 disables the timeout by default).
+#   The 500-line cap scans every .go file via find (vendor excluded)
+#   instead of `git ls-files`.
+# - gosec is still never blocking on PR, push, or schedule (the retired
+#   step used -no-fail; the reusable swallows gosec's exit status), but a
+#   run that produces no SARIF now fails the lane at the count step. SARIF
+#   no longer uploads to the Security tab (the reusable runs on a read-only
+#   token for fork safety); findings ride the 14-day gosec artifact.
+# - The coverage summary posts the last 30 `go tool cover -func` lines,
+#   the artifact is named coverage-eshu-workflow, and it no longer sets
+#   if-no-files-found: error (the floor check still fails the lane below
+#   the floor).
+# - actionlint runs from the sha256-checked 1.7.12 tarball instead of the
+#   rhysd/actionlint action, so its PR annotations are gone; findings stay
+#   in the lane log. shellcheck runs from the reusable's
+#   ludeeus/action-shellcheck 2.0.0 pin (00cae500...) instead of the former
+#   master pin.
+# - Postgres now starts as a docker container (TCP pg_isready probe, 60s
+#   budget) in a step of each lane, instead of a job `services:` block with
+#   a 5x5s health check, and the two psql CREATE DATABASE steps are
+#   replaced by the same CREATE DATABASE calls issued from inside the
+#   container.
+# - The weekly schedule now runs govulncheck and gosec only, as this
+#   header always claimed; the retired lane `if:` expressions
+#   (`github.event_name != 'pull_request'`) also ran every other lane on
+#   schedule.
+# - The retired govulncheck/gosec job grants (issues: write,
+#   security-events: write) are gone with the issue-filing and SARIF-upload
+#   paths they served.
+# - Tool pins that are inputs here: golangci-lint v2.12.2, govulncheck
+#   v1.9.0 (run with -scan package, Go 1.26 SSA-safe), gosec v2.30.0
+#   (newer than the reusable default v2.27.1), actionlint 1.7.12 (sha256
+#   8aca8db9...a3d8, tarball-verified).
+#
+# Pinned actions (SHAs synced with the uses: lines below; every other
+# action runs inside the reusable at its pin):
 #   actions/checkout v7.0.1              3d3c42e5aac5ba805825da76410c181273ba90b1
-#   actions/setup-go v7.0.0              b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
 #   dorny/paths-filter v4                ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
-#   golangci/golangci-lint-action v9.3.0 ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
-#   actions/upload-artifact v7.0.2       cf430e030ddbb5b0abf93d22962f4752f3646cd9
-#   ludeeus/action-shellcheck (master)   00b27aa7cb85167568cb48a3838b75f4265f2bca
-#   github/codeql-action/upload-sarif v4.39.1 9b3254085494b55a0f7c4c2b3d2d52cc712ce370
-#   (peeled commit; the annotated tag object is 8498dc4c2b27cdd99baf0f87955b29ebbf30c78d)
-#   rhysd/actionlint v1.7.12             914e7df21a07ef503a81201c76d2b11c789d3fca
-# Go tools (hash-verified by the toolchain on install):
-#   golangci-lint v2.12.2 (same binary Eshu uses; config in .golangci.yml)
-#   govulncheck v1.9.0, run with -scan package (Go 1.26 SSA-safe)
-#   gosec v2.30.0, run with -no-fail; the SARIF finding count is advisory
-#   until its false-positive rate here is measured, then blocking
+#   eshu-hq/.github go-collector-ci      048d30a904b9e5f02ab8276285f0e889ce7820b0
 
 name: ci
 
@@ -93,220 +141,64 @@ jobs:
               - '!.dockerignore'
               - '!.github/workflows/**'
 
-  lint:
-    needs: [changes]
-    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: vet
-        run: go vet ./...
-      - name: lint (whole repo, no baseline)
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: v2.12.2
-          args: --timeout 10m
-      - name: format check (gofumpt)
-        run: golangci-lint fmt --diff ./...
-      - name: tidy check
-        run: |
-          go mod tidy -diff
-          git diff --exit-code -- go.mod go.sum
-      - name: 500-line file cap (wc -l, sole static gate)
-        run: |
-          over=0
-          for f in $(git ls-files '*.go'); do
-            n=$(wc -l < "$f")
-            if [ "$n" -gt 500 ]; then echo "$f: $n lines"; over=1; fi
-          done
-          if [ "$over" -ne 0 ]; then echo "FAIL: .go files over 500 lines"; exit 1; fi
-      - name: Diff check
-        run: git diff --check
 
-  test:
+  lanes:
+    name: lanes
     needs: [changes]
-    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_USER: claimplane_test
-          POSTGRES_PASSWORD: claimplane_test
-          POSTGRES_DB: claimplane_test_store
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U claimplane_test"
-          --health-interval=5s --health-timeout=5s --health-retries=5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: build
-        run: go build ./...
-      - name: create server test database
-        run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_server;'
-      - name: create coordinator test database
-        run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_coordinator;'
-      - name: test
-        run: go test ./... -count=1
-
-  race:
-    needs: [changes]
-    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      COVERAGE_FLOOR: "93.5"
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_USER: claimplane_test
-          POSTGRES_PASSWORD: claimplane_test
-          POSTGRES_DB: claimplane_test_store
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U claimplane_test"
-          --health-interval=5s --health-timeout=5s --health-retries=5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: create server test database
-        run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_server;'
-      - name: create coordinator test database
-        run: PGPASSWORD=claimplane_test psql -h localhost -U claimplane_test -d claimplane_test_store -c 'CREATE DATABASE claimplane_test_coordinator;'
-      - name: race + coverprofile
-        run: go test ./... -race -count=1 -covermode=atomic -coverprofile=coverage.out
-      - name: coverage totals
-        run: go tool cover -func=coverage.out >> "$GITHUB_STEP_SUMMARY"
-      - name: enforce floor (may only rise)
-        run: |
-          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')
-          echo "statement coverage total=${total}% floor=${COVERAGE_FLOOR}%"
-          awk -v t="$total" -v f="$COVERAGE_FLOOR" 'BEGIN { if (t + 0 < f + 0) { print "FAIL: coverage below floor"; exit 1 } }'
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coverage
-          path: coverage.out
-          retention-days: 14
-          if-no-files-found: error
-
-  shell:
-    needs: [changes]
-    if: github.event_name != 'pull_request' || needs.changes.outputs.shell == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: shellcheck
-        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca
-        with:
-          scandir: .
-          format: gcc
-
-  boundary:
-    needs: [changes]
-    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - run: go test -count=1 -run TestImportBoundaryStaysStdlibOnly ./workflowv1/
-
-  image:
-    needs: [changes]
-    if: github.event_name != 'pull_request' || needs.changes.outputs.image == 'true' || needs.changes.outputs.go == 'true' || needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: build image (no push)
-        run: docker build -t ci-workflow:ci .
-      - name: every Dockerfile base is digest-pinned
-        # The build is never pushed, so there is no fresh RepoDigest to
-        # compare against here. This step proves the next best thing: the
-        # build succeeds and every Dockerfile base is digest-pinned (no
-        # floating tags), so ops-qa deploys pin an immutable rootfs.
-        run: |
-          set -euo pipefail
-          from_total=$(grep -Ec '^[[:space:]]*FROM ' Dockerfile)
-          from_pinned=$(grep -Ec '^[[:space:]]*FROM [^[:space:]]+@sha256:[0-9a-f]{64}' Dockerfile)
-          echo "Dockerfile bases: $from_pinned/$from_total digest-pinned"
-          [ "$from_pinned" -ge 1 ] && [ "$from_pinned" -eq "$from_total" ]
-
-  govulncheck:
-    needs: [changes]
-    if: github.event_name != 'pull_request' || github.event_name == 'schedule' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      issues: write # scheduled runs file or update a findings issue
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: govulncheck (package mode is Go 1.26 SSA-safe)
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-          "$(go env GOPATH)/bin/govulncheck" -scan package ./...
-
-  gosec:
-    needs: [changes]
-    if: github.event_name != 'pull_request' || github.event_name == 'schedule' || needs.changes.outputs.go == 'true' || needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      security-events: write # SARIF upload to the Security tab
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: gosec SARIF
-        # -no-fail: gosec's bundled type-checker cannot fully load Go 1.26
-        # generics and exits non-zero even with zero findings; the finding
-        # count below is the gate. Advisory until the false-positive rate
-        # here is measured, then blocking.
-        run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
-          "$(go env GOPATH)/bin/gosec" -no-fail -fmt=sarif -out=gosec.sarif ./...
-      - name: upload SARIF
-        if: github.event_name != 'pull_request'
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        with:
-          sarif_file: gosec.sarif
-        continue-on-error: true
-
-  actionlint:
-    needs: [changes]
-    if: github.event_name != 'pull_request' || needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
-        # No `with:` block: this action takes no inputs and fails the step
-        # whenever actionlint reports an error.
+    # No timeout-minutes: the schema forbids it on reusable-call jobs. Each
+    # inner lane carries its own timeout, which bounds this job.
+    uses: eshu-hq/.github/.github/workflows/go-collector-ci.yml@048d30a904b9e5f02ab8276285f0e889ce7820b0 # v2+postgres
+    with:
+      module: eshu-workflow
+      go-version-file: go.mod
+      # May only rise; pinned equal to the Makefile by ci_workflow_test.go.
+      coverage-floor: 93.5
+      # Pin every tool the retired lanes pinned; the reusable defaults float
+      # across tags and this move must neither downgrade nor silently
+      # upgrade a scanner.
+      golangci-lint-version: v2.12.2
+      govulncheck-version: v1.9.0
+      gosec-version: v2.30.0
+      actionlint-version: 1.7.12
+      actionlint-sha256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      # Opt-in Postgres for the test and race lanes (throwaway CI-only
+      # credentials). The server and coordinator packages use their own
+      # databases beside the store package's.
+      postgres-image: postgres:18
+      postgres-user: claimplane_test
+      postgres-password: claimplane_test
+      postgres-db: claimplane_test_store
+      postgres-extra-databases: claimplane_test_server,claimplane_test_coordinator
+      run-lint: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true')) }}
+      run-test: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true')) }}
+      run-race: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true')) }}
+      run-shell: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && needs.changes.outputs.shell == 'true') }}
+      run-boundary: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflows == 'true')) }}
+      boundary-command: go test -count=1 -run TestImportBoundaryStaysStdlibOnly ./workflowv1/
+      run-image: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && (needs.changes.outputs.image == 'true' || needs.changes.outputs.go == 'true' || needs.changes.outputs.workflows == 'true')) }}
+      image-tag: ci-workflow:ci
+      image-context: .
+      # The build is never pushed, so there is no fresh RepoDigest to
+      # compare against here. This proves the next best thing: every
+      # Dockerfile base is digest-pinned (no floating tags), so ops-qa
+      # deploys pin an immutable rootfs.
+      image-command: |
+        set -euo pipefail
+        from_total=$(grep -Ec '^[[:space:]]*FROM ' Dockerfile)
+        from_pinned=$(grep -Ec '^[[:space:]]*FROM [^[:space:]]+@sha256:[0-9a-f]{64}' Dockerfile)
+        echo "Dockerfile bases: $from_pinned/$from_total digest-pinned"
+        [ "$from_pinned" -ge 1 ] && [ "$from_pinned" -eq "$from_total" ]
+      run-govulncheck: ${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflows == 'true')) }}
+      run-gosec: ${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.workflows == 'true')) }}
+      # Advisory, as the retired gosec -no-fail step was: gosec's bundled
+      # type-checker cannot fully load Go 1.26 generics and exits non-zero
+      # even with zero findings. Flip to true (scheduled runs) once the
+      # false-positive rate here is measured.
+      gosec-fail-on-findings: false
+      run-actionlint: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && needs.changes.outputs.workflows == 'true') }}
 
   ci-complete:
-    needs: [changes, lint, test, race, shell, boundary, image, govulncheck, gosec, actionlint]
+    needs: [changes, lanes]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
