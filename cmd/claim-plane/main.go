@@ -173,18 +173,29 @@ func run(ctx context.Context, logger *slog.Logger, opts options) error {
 		errCh <- nil
 	}()
 
-	<-ctx.Done()
+	// A listener that fails to bind reports on errCh before any signal; stop
+	// the other listener and the reaper instead of idling half-up.
+	var firstErr error
+	received := 0
+	select {
+	case <-ctx.Done():
+	case err := <-errCh:
+		received++
+		firstErr = err
+		logger.Error("listener exited before shutdown", slog.Any("error", err))
+		stop()
+	}
 	logger.Info("shutdown started")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = protocol.Shutdown(shutdownCtx)
 	_ = admin.Shutdown(shutdownCtx)
-	for range 2 {
-		if err := <-errCh; err != nil {
-			return err
+	for ; received < 2; received++ {
+		if err := <-errCh; err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // reaperStore is the narrow tick surface the reaper needs: expiring
