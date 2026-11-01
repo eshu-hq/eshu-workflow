@@ -80,12 +80,15 @@ func clientCalls() []clientCall {
 			})
 			return err
 		}},
-		{name: "CreateRun",
-			run: func(ctx context.Context, c *client.Client) error { return c.CreateRun(ctx, run) },
+		{
+			name: "CreateRun",
+			run:  func(ctx context.Context, c *client.Client) error { return c.CreateRun(ctx, run) },
 			invalid: func(ctx context.Context, c *client.Client) error {
 				return c.CreateRun(ctx, workflowv1.Run{})
-			}},
-		{name: "EnqueueWorkItems",
+			},
+		},
+		{
+			name: "EnqueueWorkItems",
 			run: func(ctx context.Context, c *client.Client) error {
 				_, err := c.EnqueueWorkItems(ctx, []workflowv1.WorkItem{item})
 				return err
@@ -93,15 +96,19 @@ func clientCalls() []clientCall {
 			invalid: func(ctx context.Context, c *client.Client) error {
 				_, err := c.EnqueueWorkItems(ctx, nil)
 				return err
-			}},
-		{name: "ReconcileCollectorInstances",
+			},
+		},
+		{
+			name: "ReconcileCollectorInstances",
 			run: func(ctx context.Context, c *client.Client) error {
 				return c.ReconcileCollectorInstances(ctx, now, nil)
 			},
 			invalid: func(ctx context.Context, c *client.Client) error {
 				return c.ReconcileCollectorInstances(ctx, time.Time{}, nil)
-			}},
-		{name: "UpsertCompletenessStates",
+			},
+		},
+		{
+			name: "UpsertCompletenessStates",
 			run: func(ctx context.Context, c *client.Client) error {
 				return c.UpsertCompletenessStates(ctx, []workflowv1.CompletenessState{{
 					RunID: "run-1", CollectorKind: "jira", Keyspace: "k", PhaseName: "p",
@@ -110,8 +117,10 @@ func clientCalls() []clientCall {
 			},
 			invalid: func(ctx context.Context, c *client.Client) error {
 				return c.UpsertCompletenessStates(ctx, nil)
-			}},
-		{name: "ReconcileWorkflowRuns",
+			},
+		},
+		{
+			name: "ReconcileWorkflowRuns",
 			run: func(ctx context.Context, c *client.Client) error {
 				_, err := c.ReconcileWorkflowRuns(ctx, now)
 				return err
@@ -119,8 +128,10 @@ func clientCalls() []clientCall {
 			invalid: func(ctx context.Context, c *client.Client) error {
 				_, err := c.ReconcileWorkflowRuns(ctx, time.Time{})
 				return err
-			}},
-		{name: "ReapExpiredClaims",
+			},
+		},
+		{
+			name: "ReapExpiredClaims",
 			run: func(ctx context.Context, c *client.Client) error {
 				_, err := c.ReapExpiredClaims(ctx, now, 10, time.Second)
 				return err
@@ -128,8 +139,10 @@ func clientCalls() []clientCall {
 			invalid: func(ctx context.Context, c *client.Client) error {
 				_, err := c.ReapExpiredClaims(ctx, now, 0, time.Second)
 				return err
-			}},
-		{name: "ReportRunProgress",
+			},
+		},
+		{
+			name: "ReportRunProgress",
 			run: func(ctx context.Context, c *client.Client) error {
 				return c.ReportRunProgress(ctx, workflowv1.ReportRunProgressRequest{
 					RunID: "run-1", ObservedAt: now,
@@ -138,7 +151,8 @@ func clientCalls() []clientCall {
 			},
 			invalid: func(ctx context.Context, c *client.Client) error {
 				return c.ReportRunProgress(ctx, workflowv1.ReportRunProgressRequest{})
-			}},
+			},
+		},
 		{name: "GetRunStatus", run: func(ctx context.Context, c *client.Client) error {
 			_, err := c.GetRunStatus(ctx, "run-1")
 			return err

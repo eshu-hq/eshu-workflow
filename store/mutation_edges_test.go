@@ -129,12 +129,18 @@ func TestReplayedTerminalMutationsAcknowledge(t *testing.T) {
 		apply func(workflowv1.ClaimMutation) error
 		other func(workflowv1.ClaimMutation) error
 	}{
-		{"release", func(m workflowv1.ClaimMutation) error { return st.Release(ctx, m) },
-			func(m workflowv1.ClaimMutation) error { return st.Complete(ctx, m) }},
-		{"fail_retryable", func(m workflowv1.ClaimMutation) error { return st.FailRetryable(ctx, m) },
-			func(m workflowv1.ClaimMutation) error { return st.Release(ctx, m) }},
-		{"fail_terminal", func(m workflowv1.ClaimMutation) error { return st.FailTerminal(ctx, m) },
-			func(m workflowv1.ClaimMutation) error { return st.FailRetryable(ctx, m) }},
+		{
+			"release", func(m workflowv1.ClaimMutation) error { return st.Release(ctx, m) },
+			func(m workflowv1.ClaimMutation) error { return st.Complete(ctx, m) },
+		},
+		{
+			"fail_retryable", func(m workflowv1.ClaimMutation) error { return st.FailRetryable(ctx, m) },
+			func(m workflowv1.ClaimMutation) error { return st.Release(ctx, m) },
+		},
+		{
+			"fail_terminal", func(m workflowv1.ClaimMutation) error { return st.FailTerminal(ctx, m) },
+			func(m workflowv1.ClaimMutation) error { return st.FailRetryable(ctx, m) },
+		},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
