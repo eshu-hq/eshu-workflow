@@ -5,7 +5,7 @@
 #
 # Coverage floor may only rise; the finish line follows the org contract.
 
-COVERAGE_FLOOR ?= 74.7
+COVERAGE_FLOOR ?= 93.5
 
 .PHONY: ci lint test race
 

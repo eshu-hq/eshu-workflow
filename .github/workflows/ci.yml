@@ -164,7 +164,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      COVERAGE_FLOOR: "73.1"
+      COVERAGE_FLOOR: "93.5"
     services:
       postgres:
         image: postgres:18
