@@ -98,6 +98,13 @@ candidate AS (
       AND item.generation_id <> ''
       AND (item.visible_at IS NULL OR item.visible_at <= $3)
       AND NOT EXISTS (SELECT 1 FROM quota_full WHERE quota_full.scope_id = item.scope_id)
+      -- Same schedulable enforcement as the plain claim statement: a
+      -- known instance that is not claims-enabled issues nothing.
+      AND NOT EXISTS (
+        SELECT 1 FROM collector_instances AS inst
+        WHERE inst.instance_id = $2
+          AND (NOT inst.enabled OR NOT inst.claims_enabled)
+      )
     FOR UPDATE OF item SKIP LOCKED
 ),
 reserve_quota AS (
