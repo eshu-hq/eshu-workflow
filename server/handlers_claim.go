@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/eshu-hq/eshu-workflow/internal/telemetry"
 	workflowv1 "github.com/eshu-hq/eshu-workflow/workflowv1"
@@ -174,14 +175,17 @@ func (srv *Server) servePin(writer http.ResponseWriter, request *http.Request) {
 		srv.fail(inv, operation, &workflowv1.ProtocolError{Code: workflowv1.CodeInvalid, Message: err.Error()})
 		return
 	}
+	start := time.Now()
 	resp, err := srv.store.PinForCommit(ctx, body)
 	if err != nil {
 		telemetry.Fail(span, errorCode(err), err.Error())
 		srv.Instruments.ObservePin(errorCode(err))
+		srv.Instruments.ObservePinLatency(operation, errorCode(err), time.Since(start).Seconds())
 		srv.fail(inv, operation, err)
 		return
 	}
 	srv.Instruments.ObservePin("pinned")
+	srv.Instruments.ObservePinLatency(operation, "ok", time.Since(start).Seconds())
 	srv.logger.Info("commit pin",
 		slog.String("claim_id", body.ClaimID),
 		slog.String("commit_id", resp.CommitID))
