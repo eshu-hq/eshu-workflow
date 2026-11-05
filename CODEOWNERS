@@ -1,0 +1,48 @@
+# Ownership for eshu-workflow (Refs eshu-hq/eshu#8875, criterion C3).
+#
+# Accountable owner for implementation, public contract, and release:
+# @linuxdynasty. Every entry below names that owner; the entries exist so
+# review routing distinguishes the three responsibilities instead of
+# leaving them implicit.
+#
+# Production target: the owner-designated QA EKS environment (ops-qa).
+# Deployment configuration source: boatsgroup/iac-eks-eshu (a separate
+# repo under devops ownership). Nothing in this repo deploys; a Satellite
+# change here reaches ops-qa only through a reviewed pin roll there.
+#
+# The split below mirrors the workflow.v1 plane declaration
+# (workflowv1/doc.go): the claim plane (collectors claim, heartbeat,
+# complete, release, fail; core pins a claim server-side before
+# committing), the report plane (core pushes run progress), and the read
+# plane (run status, lists, completeness, instances, queue depth). The
+# public contract names the planes; the implementation serves them; the
+# release lines ship them. Contract changes move both sides at once, so
+# the contract entry is separate from the implementation entries.
+
+# Default: everything in this repo needs the accountable owner.
+* @linuxdynasty
+
+# Public contract: workflow.v1 (protocol name, major, RouteTable, planes,
+# closed enums, error and version headers). Shared with the core callers;
+# a closed-enum addition is a major protocol bump.
+# Planes served: claim, report, read.
+/workflowv1/ @linuxdynasty
+
+# Implementation: the claim-plane server, the coordinator, and the HTTP
+# client they share. No entry here changes the contract.
+/cmd/ @linuxdynasty
+/coordinator/ @linuxdynasty
+/server/ @linuxdynasty
+/store/ @linuxdynasty
+/client/ @linuxdynasty
+/internal/ @linuxdynasty
+
+# Release and supply chain: what ops-qa pins and what feeds it.
+# image-publish.yml publishes ghcr.io/eshu-hq/eshu-workflow on main and
+# version-tag pushes; Dependabot proposes the grouped weekly bumps.
+/Dockerfile @linuxdynasty
+/.dockerignore @linuxdynasty
+/.github/workflows/image-publish.yml @linuxdynasty
+/.github/dependabot.yml @linuxdynasty
+/go.mod @linuxdynasty
+/go.sum @linuxdynasty
