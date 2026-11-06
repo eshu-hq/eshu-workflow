@@ -69,11 +69,15 @@ func TestReadPlaneServesRealState(t *testing.T) {
 		t.Fatalf("Enqueue = %+v, want accepted=2 inserted=2", enqueued)
 	}
 
+	// The drain below claims through this instance, so it is declared
+	// claims-enabled: the claim plane issues nothing for a known
+	// instance that is not claims-enabled.
 	must("/workflow.v1/ReconcileCollectorInstances",
 		workflowv1.ReconcileCollectorInstancesRequest{
 			ObservedAt: now,
 			Instances: []workflowv1.DesiredCollectorInstance{{
 				InstanceID: instanceID, CollectorKind: "jira", Mode: "manual",
+				Enabled: true, ClaimsEnabled: true,
 			}},
 		}, &map[string]any{})
 

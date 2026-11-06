@@ -40,17 +40,19 @@ func Fail(span trace.Span, code, message string) {
 	span.SetStatus(codes.Error, message)
 }
 
-// Instruments holds the Prometheus counters for the claim plane. A nil
-// *Instruments is a no-op: every method guards its receiver so handler
-// tests need no registry.
+// Instruments holds the Prometheus signals for the claim plane: counters
+// per outcome, one commit-pin latency histogram, and one queue-depth
+// gauge. A nil *Instruments is a no-op: every method guards its receiver
+// so handler tests need no registry.
 type Instruments struct {
-	claims   *prometheus.CounterVec
-	mutates  *prometheus.CounterVec
-	pins     *prometheus.CounterVec
-	reaps    prometheus.Counter
-	degraded *prometheus.CounterVec
-	depths   *prometheus.GaugeVec
-	registry *prometheus.Registry
+	claims     *prometheus.CounterVec
+	mutates    *prometheus.CounterVec
+	pins       *prometheus.CounterVec
+	pinLatency *prometheus.HistogramVec
+	reaps      prometheus.Counter
+	degraded   *prometheus.CounterVec
+	depths     *prometheus.GaugeVec
+	registry   *prometheus.Registry
 }
 
 // NewInstruments registers claim-plane counters on reg, or a private
@@ -72,6 +74,15 @@ func NewInstruments(reg *prometheus.Registry) *Instruments {
 			Name: "workflow_commit_pins_total",
 			Help: "Commit-pin outcomes by result: pinned, stale, or error.",
 		}, []string{"result"}),
+		pinLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "workflow_commit_pin_duration_seconds",
+			Help: "ValidateAndPinClaimForCommit server-side latency in seconds " +
+				"by operation and protocol result code.",
+			// The default buckets resolve the tail a server-latency SLO
+			// reads (tens of milliseconds and up); a single-row pin lands
+			// in the low buckets.
+			Buckets: prometheus.DefBuckets,
+		}, []string{"operation", "code"}),
 		reaps: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "workflow_claim_reaps_total",
 			Help: "Claims expired by the reaper.",
@@ -86,7 +97,7 @@ func NewInstruments(reg *prometheus.Registry) *Instruments {
 		}, []string{"collector_kind", "state"}),
 		registry: reg,
 	}
-	reg.MustRegister(ins.claims, ins.mutates, ins.pins, ins.reaps, ins.degraded, ins.depths)
+	reg.MustRegister(ins.claims, ins.mutates, ins.pins, ins.pinLatency, ins.reaps, ins.degraded, ins.depths)
 	return ins
 }
 
@@ -121,6 +132,17 @@ func (ins *Instruments) ObservePin(result string) {
 		return
 	}
 	ins.pins.WithLabelValues(result).Inc()
+}
+
+// ObservePinLatency records one commit-pin attempt's server-side latency
+// in seconds, labeled by operation and protocol result code ("ok" on
+// success). The labels match the claim-mutation counter shape, so the
+// histogram adds no new cardinality dimension.
+func (ins *Instruments) ObservePinLatency(operation, code string, seconds float64) {
+	if ins == nil {
+		return
+	}
+	ins.pinLatency.WithLabelValues(operation, code).Observe(seconds)
 }
 
 // ObserveReap records reaped claims.

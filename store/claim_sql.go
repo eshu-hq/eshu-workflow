@@ -11,6 +11,12 @@ package claimstore
 // $1 collector_kind, $2 collector_instance_id, $3 now (visibility, lease
 // base, stamps), $4 owner_id, $5 claim_id, $6 lease_expires_at, $7 draw
 // salt (empty draws server-side randomness per head row).
+//
+// The candidate gate also enforces the reconciler's schedulable predicate:
+// an instance the plane knows and has not claims-enabled (decommissioned
+// or declared with claims_enabled=false) issues nothing, so stranded
+// sched- rows go idle instead of reaching a claimer. Instances with no
+// row keep the fencing-only behavior: the plane never declared them.
 const claimNextQuery = `
 WITH RECURSIVE keys AS (
     (SELECT claim_priority, COALESCE(fairness_key, '') AS fairness_key
@@ -78,6 +84,11 @@ candidate AS (
       AND item.source_run_id <> ''
       AND item.generation_id <> ''
       AND (item.visible_at IS NULL OR item.visible_at <= $3)
+      AND NOT EXISTS (
+        SELECT 1 FROM collector_instances AS inst
+        WHERE inst.instance_id = $2
+          AND (NOT inst.enabled OR NOT inst.claims_enabled)
+      )
     FOR UPDATE OF item SKIP LOCKED
 ),
 claimed_item AS (
