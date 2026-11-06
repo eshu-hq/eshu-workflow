@@ -231,6 +231,41 @@ func TestDecommissionedInstanceIdlesOnQuotaPath(t *testing.T) {
 	}
 }
 
+// TestGatedInstanceIdlesWithQuotaAvailable isolates the quota statement's
+// issuing gate: quota is fresh (grants remain), so only the statement gate
+// stands between the pending item and a grant. Removing the statement gate
+// issues here, while the exhausted-quota twins above would still pass.
+func TestGatedInstanceIdlesWithQuotaAvailable(t *testing.T) {
+	st, ctx := openFreshStore(t)
+	if err := st.Configure(claimstore.Config{Quotas: map[string]int{"jira": 5}}); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := st.ReconcileInstances(ctx, now, []workflowv1.DesiredCollectorInstance{
+		declareInstance(true, false),
+	}); err != nil {
+		t.Fatalf("reconcile instances: %v", err)
+	}
+	runID := seedRun(t, ctx, st)
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{
+		strandedItem(runID, "drill-instance-1", "scope-q"),
+	}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	resp := mustClaim(t, ctx, st, workflowv1.ClaimSelector{
+		CollectorKind:       workflowv1.CollectorKind("jira"),
+		CollectorInstanceID: "drill-instance-1",
+		OwnerID:             "owner-q",
+		ClaimID:             "claim-q",
+	}, now)
+	if resp.Issued {
+		t.Fatalf("claims-disabled instance issued %q with quota available, want idle", resp.Grant.WorkItem.WorkItemID)
+	}
+	if resp.Deferral != (workflowv1.ClaimPacingDeferral{}) {
+		t.Fatalf("claims-disabled instance deferred %+v with quota available, want idle", resp.Deferral)
+	}
+}
+
 // TestEnabledInstanceStillIssues guards the other side of the gate: an
 // enabled, claims-enabled instance keeps issuing its pending items.
 func TestEnabledInstanceStillIssues(t *testing.T) {
