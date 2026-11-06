@@ -276,7 +276,10 @@ func TestGatedInstanceIdlesWithFloorExhausted(t *testing.T) {
 	if err := st.Configure(claimstore.Config{Quotas: map[string]int{"jira": 1}}); err != nil {
 		t.Fatalf("configure: %v", err)
 	}
-	now := time.Now().UTC().Truncate(time.Millisecond)
+	// Anchor mid-hour so the floor-burn claims and the final claim share
+	// one hourly floor window; a run starting in the last seconds of an
+	// hour would otherwise straddle the window and pass vacuously.
+	now := time.Now().UTC().Truncate(time.Hour).Add(5 * time.Minute)
 	if err := st.ReconcileInstances(ctx, now, []workflowv1.DesiredCollectorInstance{
 		declareInstance(true, true),
 	}); err != nil {
