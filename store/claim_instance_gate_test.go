@@ -266,6 +266,78 @@ func TestGatedInstanceIdlesWithQuotaAvailable(t *testing.T) {
 	}
 }
 
+// TestGatedInstanceIdlesWithFloorExhausted covers the quota-floor error
+// corner: the quota statement fails and the floor budget is spent, so only
+// the instance gate stands between the pending item and a deferral. Before
+// the floor fix the exhausted branch deferred; it must answer idle with
+// the floor reason instead, without burning budget it never grants.
+func TestGatedInstanceIdlesWithFloorExhausted(t *testing.T) {
+	st, ctx := openFreshStore(t)
+	if err := st.Configure(claimstore.Config{Quotas: map[string]int{"jira": 1}}); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := st.ReconcileInstances(ctx, now, []workflowv1.DesiredCollectorInstance{
+		declareInstance(true, true),
+	}); err != nil {
+		t.Fatalf("reconcile instances: %v", err)
+	}
+	runID := seedRun(t, ctx, st)
+	var items []workflowv1.WorkItem
+	for i := 0; i < claimstore.DefaultQuotaFloorGrantsPerHour+1; i++ {
+		item := strandedItem(runID, "drill-instance-1", "scope-f")
+		item.WorkItemID = "sched-jira-drill-instance-1-wfloor-" + string(rune('a'+i)) + "/floor-scope"
+		item.ScopeID = "floor-scope"
+		item.AcceptanceUnitID = "au-floor-scope"
+		item.SourceRunID = "sr-floor-scope"
+		item.GenerationID = "gen-floor-scope"
+		items = append(items, item)
+	}
+	if _, err := st.Enqueue(ctx, items); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	// Fail the quota statement so every claim runs the floor path, then
+	// spend the whole floor budget through the still-enabled instance.
+	if err := st.DropTableForTest(ctx, "component_quota_windows"); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	restoreMigration(t, ctx, st, "002_pacing_quota")
+	for i := 0; i < claimstore.DefaultQuotaFloorGrantsPerHour; i++ {
+		resp, err := st.ClaimNext(ctx, workflowv1.ClaimSelector{
+			CollectorKind:       workflowv1.CollectorKind("jira"),
+			CollectorInstanceID: "drill-instance-1",
+			OwnerID:             "owner-f",
+			ClaimID:             "claim-floor-burn-" + string(rune('a'+i)),
+		}, now.Add(time.Duration(i)*time.Second), time.Minute)
+		if err != nil {
+			t.Fatalf("floor burn claim %d: %v", i, err)
+		}
+		if !resp.Issued {
+			t.Fatalf("floor burn claim %d issued nothing, want a floor grant", i)
+		}
+	}
+	if err := st.ReconcileInstances(ctx, now, []workflowv1.DesiredCollectorInstance{
+		declareInstance(true, false),
+	}); err != nil {
+		t.Fatalf("disable claims: %v", err)
+	}
+	resp := mustClaim(t, ctx, st, workflowv1.ClaimSelector{
+		CollectorKind:       workflowv1.CollectorKind("jira"),
+		CollectorInstanceID: "drill-instance-1",
+		OwnerID:             "owner-g",
+		ClaimID:             "claim-gated-floor",
+	}, now)
+	if resp.Issued {
+		t.Fatalf("claims-disabled instance issued %q on the exhausted floor, want idle", resp.Grant.WorkItem.WorkItemID)
+	}
+	if resp.Deferral != (workflowv1.ClaimPacingDeferral{}) {
+		t.Fatalf("claims-disabled instance deferred %+v on the exhausted floor, want idle", resp.Deferral)
+	}
+	if resp.DegradedReason != "quota_floor" {
+		t.Fatalf("degraded reason = %q, want quota_floor", resp.DegradedReason)
+	}
+}
+
 // TestEnabledInstanceStillIssues guards the other side of the gate: an
 // enabled, claims-enabled instance keeps issuing its pending items.
 func TestEnabledInstanceStillIssues(t *testing.T) {

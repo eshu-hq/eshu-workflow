@@ -70,6 +70,22 @@ func configJSON(raw string) string {
 	return raw
 }
 
+// instanceGated reports whether instanceID names a known collector instance
+// row that is not claims-enabled (disabled or claims off). Unknown IDs and
+// lookup errors return false so degraded paths stay fail-open: a gate the
+// plane cannot read must not deny grants to healthy instances.
+func (s *Store) instanceGated(ctx context.Context, instanceID string) (bool, error) {
+	var gated bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS(
+SELECT 1 FROM collector_instances
+WHERE instance_id = $1 AND (NOT enabled OR NOT claims_enabled)
+)`, instanceID).Scan(&gated)
+	if err != nil {
+		return false, fmt.Errorf("read instance gate: %w", err)
+	}
+	return gated, nil
+}
+
 // ListInstances returns every durable collector instance, read-only.
 func (s *Store) ListInstances(ctx context.Context) ([]workflowv1.CollectorInstance, error) {
 	rows, err := s.pool.Query(ctx, `SELECT instance_id, collector_kind, mode,
