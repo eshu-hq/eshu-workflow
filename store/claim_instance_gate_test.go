@@ -58,8 +58,8 @@ func mustClaim(
 // TestDecommissionedInstanceStaysIdle requires the stranded shape to go
 // quiet: an item seeded while its instance was enabled, reaped after its
 // lease expired, then decommissioned out of the desired set, must not be
-// issued again. Today the claim path has no instance-state predicate, so
-// the dry claim re-issues the orphan and this test fails.
+// issued again. Before the fix the claim path had no instance-state
+// predicate, so the dry claim re-issued the orphan and this test failed.
 func TestDecommissionedInstanceStaysIdle(t *testing.T) {
 	st, ctx := openFreshStore(t)
 	now := time.Now().UTC().Truncate(time.Millisecond)
@@ -136,6 +136,98 @@ func TestClaimsDisabledInstanceStaysIdle(t *testing.T) {
 	}, now)
 	if resp.Issued {
 		t.Fatalf("claims-disabled instance issued %q, want idle", resp.Grant.WorkItem.WorkItemID)
+	}
+}
+
+// TestGatedInstanceIdlesOnQuotaPath pins the quota statement's gate: with
+// a quota configured and exhausted, a claims-disabled instance must answer
+// idle (no grant and no deferral), not quota-deferred. Before the probe
+// fix the throttle probe ignored instance state, so this claim deferred
+// and the test failed.
+func TestGatedInstanceIdlesOnQuotaPath(t *testing.T) {
+	st, ctx := openFreshStore(t)
+	if err := st.Configure(claimstore.Config{Quotas: map[string]int{"jira": 1}}); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := st.ReconcileInstances(ctx, now, []workflowv1.DesiredCollectorInstance{
+		declareInstance(true, true),
+	}); err != nil {
+		t.Fatalf("reconcile instances: %v", err)
+	}
+	runID := seedRun(t, ctx, st)
+	first := strandedItem(runID, "drill-instance-1", "scope-q")
+	second := strandedItem(runID, "drill-instance-1", "scope-q")
+	second.WorkItemID = "sched-jira-drill-instance-1-w1/scope-q"
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{first, second}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	selector := workflowv1.ClaimSelector{
+		CollectorKind:       workflowv1.CollectorKind("jira"),
+		CollectorInstanceID: "drill-instance-1",
+		OwnerID:             "owner-q0",
+		ClaimID:             "claim-q0",
+	}
+	if first := mustClaim(t, ctx, st, selector, now); !first.Issued {
+		t.Fatalf("enabled instance issued nothing, want the first item (quota now exhausted)")
+	}
+	if err := st.ReconcileInstances(ctx, now, []workflowv1.DesiredCollectorInstance{
+		declareInstance(true, false),
+	}); err != nil {
+		t.Fatalf("disable claims: %v", err)
+	}
+	selector.OwnerID = "owner-q1"
+	selector.ClaimID = "claim-q1"
+	resp := mustClaim(t, ctx, st, selector, now)
+	if resp.Issued {
+		t.Fatalf("claims-disabled instance issued %q on the quota path, want idle", resp.Grant.WorkItem.WorkItemID)
+	}
+	if resp.Deferral != (workflowv1.ClaimPacingDeferral{}) {
+		t.Fatalf("claims-disabled instance deferred %+v on the quota path, want idle", resp.Deferral)
+	}
+}
+
+// TestDecommissionedInstanceIdlesOnQuotaPath is the decommissioned twin of
+// the gate above: the instance row survives the revert as disabled while
+// the pending item and the exhausted quota survive with it.
+func TestDecommissionedInstanceIdlesOnQuotaPath(t *testing.T) {
+	st, ctx := openFreshStore(t)
+	if err := st.Configure(claimstore.Config{Quotas: map[string]int{"jira": 1}}); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := st.ReconcileInstances(ctx, now, []workflowv1.DesiredCollectorInstance{
+		declareInstance(true, true),
+	}); err != nil {
+		t.Fatalf("reconcile instances: %v", err)
+	}
+	runID := seedRun(t, ctx, st)
+	first := strandedItem(runID, "drill-instance-1", "scope-q")
+	second := strandedItem(runID, "drill-instance-1", "scope-q")
+	second.WorkItemID = "sched-jira-drill-instance-1-w1/scope-q"
+	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{first, second}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	selector := workflowv1.ClaimSelector{
+		CollectorKind:       workflowv1.CollectorKind("jira"),
+		CollectorInstanceID: "drill-instance-1",
+		OwnerID:             "owner-q0",
+		ClaimID:             "claim-q0",
+	}
+	if first := mustClaim(t, ctx, st, selector, now); !first.Issued {
+		t.Fatalf("enabled instance issued nothing, want the first item (quota now exhausted)")
+	}
+	if err := st.ReconcileInstances(ctx, now, nil); err != nil {
+		t.Fatalf("decommission instances: %v", err)
+	}
+	selector.OwnerID = "owner-q1"
+	selector.ClaimID = "claim-q1"
+	resp := mustClaim(t, ctx, st, selector, now)
+	if resp.Issued {
+		t.Fatalf("decommissioned instance issued %q on the quota path, want idle", resp.Grant.WorkItem.WorkItemID)
+	}
+	if resp.Deferral != (workflowv1.ClaimPacingDeferral{}) {
+		t.Fatalf("decommissioned instance deferred %+v on the quota path, want idle", resp.Deferral)
 	}
 }
 
