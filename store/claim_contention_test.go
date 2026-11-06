@@ -18,6 +18,7 @@ import (
 // tokens must start at 1, and no two grants may share a work item.
 func TestClaimContentionGrantsEachItemOnce(t *testing.T) {
 	st, ctx := openFreshStore(t)
+	declareJiraPrimary(t, ctx, st)
 	runID := seedRun(t, ctx, st)
 	items := make([]workflowv1.WorkItem, 0, 4)
 	for i := range 4 {

@@ -70,6 +70,19 @@ func configJSON(raw string) string {
 	return raw
 }
 
+// instanceKnown reports whether instanceID names a declared collector
+// instance row. Unknown IDs answer idle upstream; a lookup failure is an
+// infrastructure error and must surface, never read as idle.
+func (s *Store) instanceKnown(ctx context.Context, instanceID string) (bool, error) {
+	var known bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS(
+SELECT 1 FROM collector_instances WHERE instance_id = $1)`, instanceID).Scan(&known)
+	if err != nil {
+		return false, fmt.Errorf("read instance presence: %w", err)
+	}
+	return known, nil
+}
+
 // instanceGated reports whether instanceID names a known collector instance
 // row that is not claims-enabled (disabled or claims off). Unknown IDs and
 // lookup errors return false so degraded paths stay fail-open: a gate the

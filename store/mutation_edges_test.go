@@ -231,6 +231,7 @@ func TestReapRejectsNonPositiveLimitAndClampsNegativeDelay(t *testing.T) {
 // lease.
 func TestClaimNextLeaseTTLDefaultsWhenUnset(t *testing.T) {
 	st, ctx := openFreshStore(t)
+	declareJiraPrimary(t, ctx, st)
 	runID := seedRun(t, ctx, st)
 	if _, err := st.Enqueue(ctx, []workflowv1.WorkItem{seedItem(runID, "ttl-1", false)}); err != nil {
 		t.Fatalf("enqueue: %v", err)

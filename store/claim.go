@@ -20,7 +20,10 @@ var _ server.ClaimStore = (*Store)(nil)
 // ClaimNext grants the next eligible work item or returns the inline pacing
 // verdict. Fairness, the pacing latch, and quota accounting execute inside
 // this call; an idle queue reports (zero response, nil) and the server maps
-// it to not_found.
+// it to not_found. A selector naming an instance the plane never declared
+// is idle too: unknown instances own no schedulable work, so stranded rows
+// for a ghost instance never issue. A presence-lookup failure is
+// infrastructure, not idleness, and returns as an error.
 func (s *Store) ClaimNext(
 	ctx context.Context,
 	selector workflowv1.ClaimSelector,
@@ -29,6 +32,13 @@ func (s *Store) ClaimNext(
 ) (workflowv1.ClaimNextResponse, error) {
 	if err := selector.Validate(); err != nil {
 		return workflowv1.ClaimNextResponse{}, staleAsInvalid(err)
+	}
+	known, err := s.instanceKnown(ctx, selector.CollectorInstanceID)
+	if err != nil {
+		return workflowv1.ClaimNextResponse{}, err
+	}
+	if !known {
+		return workflowv1.ClaimNextResponse{}, nil
 	}
 	if leaseTTL <= 0 {
 		leaseTTL = workflowv1.DefaultClaimLeaseTTL()

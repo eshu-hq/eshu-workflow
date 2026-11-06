@@ -35,6 +35,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 // signal with a backoff reaching the next hour window.
 func TestQuotaBlocksThirdGrantInScope(t *testing.T) {
 	st, ctx := openFreshStore(t)
+	declareJiraPrimary(t, ctx, st)
 	if err := st.Configure(claimstore.Config{Quotas: map[string]int{"jira": 2}}); err != nil {
 		t.Fatalf("configure: %v", err)
 	}
@@ -80,6 +81,7 @@ func TestQuotaBlocksThirdGrantInScope(t *testing.T) {
 // and requires ClaimNext to defer instead of granting.
 func TestPacingDefersOverHighWater(t *testing.T) {
 	st, ctx := openFreshStore(t)
+	declareJiraPrimary(t, ctx, st)
 	if err := st.Configure(claimstore.Config{Pacing: workflowv1.ClaimPacingConfig{
 		DomainHigh: 1, DomainLow: 0,
 		GlobalHigh: 1000, GlobalLow: 900,
