@@ -98,6 +98,13 @@ candidate AS (
       AND item.generation_id <> ''
       AND (item.visible_at IS NULL OR item.visible_at <= $3)
       AND NOT EXISTS (SELECT 1 FROM quota_full WHERE quota_full.scope_id = item.scope_id)
+      -- Same schedulable enforcement as the plain claim statement: a
+      -- known instance that is not claims-enabled issues nothing.
+      AND NOT EXISTS (
+        SELECT 1 FROM collector_instances AS inst
+        WHERE inst.instance_id = $2
+          AND (NOT inst.enabled OR NOT inst.claims_enabled)
+      )
     FOR UPDATE OF item SKIP LOCKED
 ),
 reserve_quota AS (
@@ -233,6 +240,11 @@ JOIN inserted_claim ON inserted_claim.work_item_id = claimed_item.work_item_id
 // quota blocked it" on the empty path. Its answer feeds the deferral only,
 // never admission.
 //
+// Both arms carry the same schedulable enforcement as the issuing
+// statements: a known instance that is not claims-enabled reports no work
+// and no throttle, so the empty path answers idle instead of
+// quota-deferred. Unknown instances keep passthrough via NOT EXISTS.
+//
 // $1 collector_kind, $2 collector_instance_id, $3 now, $4 limit.
 const quotaThrottleProbeQuery = `
 SELECT
@@ -246,6 +258,11 @@ SELECT
           AND source_run_id <> ''
           AND generation_id <> ''
           AND (visible_at IS NULL OR visible_at <= $3)
+          AND NOT EXISTS (
+            SELECT 1 FROM collector_instances AS inst
+            WHERE inst.instance_id = $2
+              AND (NOT inst.enabled OR NOT inst.claims_enabled)
+          )
     ) AS has_work,
     EXISTS(
         SELECT 1 FROM workflow_work_items AS item
@@ -262,5 +279,10 @@ SELECT
           AND item.generation_id <> ''
           AND (item.visible_at IS NULL OR item.visible_at <= $3)
           AND w.grants >= $4
+          AND NOT EXISTS (
+            SELECT 1 FROM collector_instances AS inst
+            WHERE inst.instance_id = $2
+              AND (NOT inst.enabled OR NOT inst.claims_enabled)
+          )
     ) AS throttled
 `

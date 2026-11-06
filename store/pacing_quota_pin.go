@@ -343,6 +343,13 @@ func (s *Store) claimWithFloor(
 	s.degraded(degradedQuotaFloor, cause,
 		slog.String("collector_kind", string(selector.CollectorKind)),
 		slog.String("collector_instance_id", selector.CollectorInstanceID))
+	// A gated instance never draws from the floor: it answers idle with the
+	// floor reason instead of burning budget it cannot grant or, once the
+	// budget is spent, deferring. Unknown instances and lookup errors stay
+	// fail-open through the budget logic below.
+	if gated, err := s.instanceGated(ctx, selector.CollectorInstanceID); err == nil && gated {
+		return workflowv1.ClaimNextResponse{DegradedReason: degradedQuotaFloor}, nil
+	}
 	window := now.Truncate(time.Hour)
 	key := floorKey{component: string(selector.CollectorKind), window: window}
 	s.mu.Lock()
