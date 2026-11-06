@@ -128,10 +128,13 @@ func TestDatabaseLossWithPacingAndQuotasStillErrors(t *testing.T) {
 	selector := workflowv1.ClaimSelector{
 		CollectorKind: "jira", CollectorInstanceID: "jira-primary", OwnerID: "o-1", ClaimID: "c-1",
 	}
+	// The presence lookup runs before the pacing, quota, and claim reads,
+	// so a dead database surfaces there first. Either way the failure is
+	// an error, never idle.
 	if _, err := st.ClaimNext(ctx, selector, now, time.Minute); err == nil {
 		t.Fatal("ClaimNext returned nil with pacing, quota, and claim reads all failing")
-	} else if !strings.Contains(err.Error(), "floor claim failed") {
-		t.Fatalf("ClaimNext error = %v, want the quota-floor failure naming both causes", err)
+	} else if !strings.Contains(err.Error(), "read instance presence") {
+		t.Fatalf("ClaimNext error = %v, want the instance-presence failure", err)
 	}
 	if _, err := st.CheckPacing(ctx, "jira", "jira-primary", now); err == nil {
 		t.Fatal("CheckPacing returned nil with the depth read failing")

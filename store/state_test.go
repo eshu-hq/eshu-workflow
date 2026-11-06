@@ -227,6 +227,7 @@ func TestClaimAliasesAndTerminalFail(t *testing.T) {
 // then restores the schema.
 func TestQuotaFloorGrantsWhenQuotaStateUnreadable(t *testing.T) {
 	st, ctx := openFreshStore(t)
+	declareJiraPrimary(t, ctx, st)
 	if err := st.Configure(newTestConfig(t, map[string]int{"jira": 2})); err != nil {
 		t.Fatalf("configure: %v", err)
 	}

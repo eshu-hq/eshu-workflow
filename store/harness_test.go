@@ -88,8 +88,24 @@ func seedItem(runID, itemID string, tenant bool) workflowv1.WorkItem {
 	return item
 }
 
+// declareJiraPrimary declares the shared fixture instance claims-enabled.
+// Production always reconciles instances before work flows, so tests that
+// expect grants must declare first; tests for unknown instances must never
+// call it.
+func declareJiraPrimary(t *testing.T, ctx context.Context, st *claimstore.Store) {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := st.ReconcileInstances(ctx, now, []workflowv1.DesiredCollectorInstance{{
+		InstanceID: "jira-primary", CollectorKind: workflowv1.CollectorKind("jira"),
+		Mode: workflowv1.CollectorModeScheduled, Enabled: true, ClaimsEnabled: true,
+	}}); err != nil {
+		t.Fatalf("reconcile fixture instance: %v", err)
+	}
+}
+
 func claimOne(t *testing.T, ctx context.Context, st *claimstore.Store, claimID, owner string, ttl time.Duration) workflowv1.ClaimNextResponse {
 	t.Helper()
+	declareJiraPrimary(t, ctx, st)
 	resp, err := st.ClaimNext(ctx, workflowv1.ClaimSelector{
 		CollectorKind:       workflowv1.CollectorKind("jira"),
 		CollectorInstanceID: "jira-primary",

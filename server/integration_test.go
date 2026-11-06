@@ -132,6 +132,14 @@ func TestEndToEndClaimLifecycleOverHTTP(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
+	// The claim below issues only for a declared instance: unknown
+	// instances answer idle, so the drain declares its instance first.
+	if err := st.ReconcileInstances(ctx, now, []workflowv1.DesiredCollectorInstance{{
+		InstanceID: "jira-primary", CollectorKind: "jira", Mode: "manual",
+		Enabled: true, ClaimsEnabled: true,
+	}}); err != nil {
+		t.Fatalf("reconcile instances: %v", err)
+	}
 
 	var claimed workflowv1.ClaimNextResponse
 	if status := call(t, httpSrv, "/workflow.v1/ClaimNext", workflowv1.ClaimNextRequest{

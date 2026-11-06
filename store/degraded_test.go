@@ -91,6 +91,7 @@ func claimWithSelector(
 	st *claimstore.Store,
 ) workflowv1.ClaimNextResponse {
 	t.Helper()
+	declareJiraPrimary(t, ctx, st)
 	resp, err := st.ClaimNext(ctx, workflowv1.ClaimSelector{
 		CollectorKind:       workflowv1.CollectorKind("jira"),
 		CollectorInstanceID: "jira-primary",
