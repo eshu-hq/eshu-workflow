@@ -10,10 +10,12 @@ shared by this service and its callers in Eshu core. Three planes:
 
 - Claim plane: `ClaimNext` (with inline pacing verdict),
   `CheckClaimPacing`, `HeartbeatClaim`, `CompleteClaim`, `ReleaseClaim`,
-  `FailClaimRetryable`, `FailClaimTerminal`, and
+  `FailClaimRetryable`, `FailClaimTerminal`,
   `ValidateAndPinClaimForCommit` — the server-side commit pin that
   replaces the in-transaction heartbeat, so the reaper cannot expire a
-  claim before its fact-commit deadline.
+  claim before its fact-commit deadline — and `CommitClaimFacts`, a
+  byte-verbatim proxy that forwards one commit envelope to core and
+  copies core's answer back without touching the local store.
 - Report plane: `ReportRunProgress` — core pushes run progress the
   service may no longer read from core tables.
 - Read plane: `GetRunStatus`, `ListRuns`, `GetRunCompleteness`,
@@ -28,14 +30,16 @@ blank.
 
 ## Claim-plane server
 
-`cmd/claim-plane` serves the 20 protocol routes over its own Postgres
+`cmd/claim-plane` serves the 21 protocol routes over its own Postgres
 database (`store`, pgx, fresh-install migrations in
 `store/migrations`). Heartbeat and complete enforce fencing only: the
 in-tree tenant-grant join is gone because grant tables stay core-owned
 and grant authority moves to the commit pin plus core admission. An
 internal reaper expires stale claims (skipping pinned ones) and
 reconciles drained runs. Admin listener serves `/healthz`, `/readyz`,
-and `/metrics`.
+and `/metrics`. The `CommitClaimFacts` proxy stays dark until
+`--core-commit-url` (or `CLAIMPLANE_CORE_COMMIT_URL`) names core; unset
+fails the route closed with a 500 that is never an ack.
 
 ```sh
 CLAIMPLANE_DATABASE_URL='postgres://user:pass@localhost:5432/claimplane?sslmode=disable' \

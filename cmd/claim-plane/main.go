@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 eshu-hq
 
-// Command claim-plane serves the workflow claim plane: 20 protocol routes
+// Command claim-plane serves the workflow claim plane: 21 protocol routes
 // over one Postgres database, with an internal reaper and an admin
 // listener for health and metrics.
 package main
@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -29,15 +30,16 @@ import (
 )
 
 type options struct {
-	listen       string
-	adminListen  string
-	databaseURL  string
-	reapInterval time.Duration
-	reapLimit    int
-	requeueDelay time.Duration
-	quotas       string
-	pacing       workflowv1.ClaimPacingConfig
-	showVersion  bool
+	listen        string
+	adminListen   string
+	databaseURL   string
+	coreCommitURL string
+	reapInterval  time.Duration
+	reapLimit     int
+	requeueDelay  time.Duration
+	quotas        string
+	pacing        workflowv1.ClaimPacingConfig
+	showVersion   bool
 }
 
 func parseFlags(args []string) (options, error) {
@@ -46,6 +48,7 @@ func parseFlags(args []string) (options, error) {
 	fs.StringVar(&opts.listen, "listen", ":8080", "protocol listener address")
 	fs.StringVar(&opts.adminListen, "admin-listen", ":8081", "health and metrics listener address")
 	fs.StringVar(&opts.databaseURL, "database-url", os.Getenv("CLAIMPLANE_DATABASE_URL"), "postgres DSN")
+	fs.StringVar(&opts.coreCommitURL, "core-commit-url", os.Getenv("CLAIMPLANE_CORE_COMMIT_URL"), "core CommitClaimFacts base URL (unset keeps the route dark)")
 	fs.DurationVar(&opts.reapInterval, "reap-interval", workflowv1.DefaultReapInterval(), "reaper tick interval")
 	fs.IntVar(&opts.reapLimit, "reap-limit", workflowv1.DefaultExpiredClaimLimit(), "claims reaped per tick")
 	fs.DurationVar(&opts.requeueDelay, "requeue-delay", workflowv1.DefaultExpiredClaimRequeueDelay(), "visibility delay for reaped items")
@@ -76,6 +79,21 @@ func parseFlags(args []string) (options, error) {
 	return opts, nil
 }
 
+// validateCoreCommitURL fails fast on a malformed proxy target so the
+// service never boots half-dark on a typo: an invalid non-empty URL is a
+// startup error, while an empty URL keeps the route dark.
+func validateCoreCommitURL(raw string) error {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("invalid core commit URL %q", raw)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("invalid core commit URL %q: scheme must be http or https", raw)
+	}
+	return nil
+}
+
 func parseQuotas(raw string) (map[string]int, error) {
 	quotas := map[string]int{}
 	if strings.TrimSpace(raw) == "" {
@@ -104,6 +122,11 @@ func run(ctx context.Context, logger *slog.Logger, opts options) error {
 	if err != nil {
 		return err
 	}
+	if opts.coreCommitURL != "" {
+		if err := validateCoreCommitURL(opts.coreCommitURL); err != nil {
+			return err
+		}
+	}
 	store, err := claimstore.Open(ctx, opts.databaseURL)
 	if err != nil {
 		return err
@@ -121,6 +144,10 @@ func run(ctx context.Context, logger *slog.Logger, opts options) error {
 	srv, err := server.New(store, logger)
 	if err != nil {
 		return err
+	}
+	if opts.coreCommitURL != "" {
+		srv.SetCommitForwarder(opts.coreCommitURL,
+			&http.Client{Timeout: server.CommitForwardTimeout})
 	}
 	srv.Instruments = instruments
 	store.Instruments = instruments

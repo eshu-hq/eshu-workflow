@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,7 +20,10 @@ import (
 )
 
 // fakeStore implements server.ClaimStore in memory for handler tests.
+// The call log is mutex-guarded: the commit-proxy re-entrancy test
+// drives heartbeats from two goroutines at once.
 type fakeStore struct {
+	mu           sync.Mutex
 	claimErr     error
 	pinResp      workflowv1.CommitPinResponse
 	paced        bool
@@ -31,6 +35,8 @@ type fakeStore struct {
 }
 
 func (f *fakeStore) note(op string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, op)
 }
 
