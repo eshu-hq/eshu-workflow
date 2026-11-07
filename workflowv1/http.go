@@ -17,6 +17,7 @@ const (
 	OpFailClaimRetryable           Operation = "FailClaimRetryable"
 	OpFailClaimTerminal            Operation = "FailClaimTerminal"
 	OpValidateAndPinClaimForCommit Operation = "ValidateAndPinClaimForCommit"
+	OpCommitClaimFacts             Operation = "CommitClaimFacts"
 	// Control plane: the coordinator seams. Each resolves a method the
 	// claim-plane client used to reject with ErrClaimPlaneUnsupported to
 	// a real route served from the service's own database.
@@ -55,6 +56,7 @@ var RouteTable = []Route{
 	{OpFailClaimRetryable, "POST", "/workflow.v1/FailClaimRetryable"},
 	{OpFailClaimTerminal, "POST", "/workflow.v1/FailClaimTerminal"},
 	{OpValidateAndPinClaimForCommit, "POST", "/workflow.v1/ValidateAndPinClaimForCommit"},
+	{OpCommitClaimFacts, "POST", "/workflow.v1/CommitClaimFacts"},
 	{OpCreateRun, "POST", "/workflow.v1/CreateRun"},
 	{OpEnqueueWorkItems, "POST", "/workflow.v1/EnqueueWorkItems"},
 	{OpReconcileCollectorInstances, "POST", "/workflow.v1/ReconcileCollectorInstances"},
