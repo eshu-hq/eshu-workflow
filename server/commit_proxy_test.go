@@ -399,3 +399,32 @@ func TestCommitClaimFactsRejectsVersionMismatch(t *testing.T) {
 		t.Fatalf("version-mismatched commit forwarded %d times, want 0", core.hitCount())
 	}
 }
+
+// TestCommitClaimFactsDefaultsContentTypeWhenCoreOmitsIt requires the
+// proxy to answer application/json when core's answer carries no
+// Content-Type: downstream clients decode the envelope as JSON either
+// way, so the proxy never forwards a bare frame.
+func TestCommitClaimFactsDefaultsContentTypeWhenCoreOmitsIt(t *testing.T) {
+	coreSrv := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK) // No body, no Content-Type.
+	}))
+	defer coreSrv.Close()
+
+	st := &fakeStore{}
+	srv := newTestServerWithCommitTarget(t, st, coreSrv.URL)
+	defer srv.Close()
+
+	now := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339Nano)
+	resp := post(t, srv, "/workflow.v1/CommitClaimFacts",
+		commitBodyForTest(now, `{"fact_rows":[]}`))
+	status, body := readAllForTest(t, resp)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200", status)
+	}
+	if contentType := resp.Header.Get("Content-Type"); contentType != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", contentType)
+	}
+	if body != "" {
+		t.Fatalf("body = %q, want empty (core sent nothing)", body)
+	}
+}
