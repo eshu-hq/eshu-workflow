@@ -6,6 +6,7 @@ package server_test
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -15,8 +16,16 @@ import (
 // TestAllRoutesAreServed walks the merged route table and requires every
 // operation to answer (never 404) with a well-formed body or envelope.
 func TestAllRoutesAreServed(t *testing.T) {
+	// The commit route is a proxy, not a store call: a canned core
+	// answers {"ok":true} so the served check covers all 21 routes.
+	core := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true}`))
+	}))
+	defer core.Close()
+
 	st := &fakeStore{}
-	srv := newTestServer(t, st)
+	srv := newTestServerWithCommitTarget(t, st, core.URL)
 	defer srv.Close()
 
 	now := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339Nano)
@@ -44,6 +53,10 @@ func TestAllRoutesAreServed(t *testing.T) {
 		workflowv1.OpValidateAndPinClaimForCommit: fmt.Sprintf(
 			`{"claim_id":"c-1","fencing_token":1,"scope_id":"scope-1","source_run_id":"sr-1","generation_id":"gen-1","commit_deadline":%q}`,
 			time.Now().UTC().Add(time.Hour).Truncate(time.Second).Format(time.RFC3339Nano)),
+		workflowv1.OpCommitClaimFacts: fmt.Sprintf(
+			`{"work_item_id":"item-1","claim_id":"c-1","fencing_token":1,"owner_id":"o-1","observed_at":%q,"lease_duration_ns":60000000000,`+
+				`"idempotency_key":"idem-1","result_json":{"fact_rows":[]},"scope_id":"scope-1","source_run_id":"sr-1","generation_id":"gen-1"}`,
+			now),
 		workflowv1.OpCreateRun: fmt.Sprintf(
 			`{"run":{"run_id":"run-1","trigger_kind":"schedule","status":"collection_active","created_at":%q,"updated_at":%q}}`,
 			now, now),
@@ -86,11 +99,14 @@ func TestAllRoutesAreServed(t *testing.T) {
 		workflowv1.OpReconcileWorkflowRuns:        "ReconcileRuns",
 		workflowv1.OpReapExpiredClaims:            "Reap",
 		workflowv1.OpReportRunProgress:            "ReportProgress",
-		workflowv1.OpGetRunStatus:                 "GetRunStatus",
-		workflowv1.OpListRuns:                     "ListRuns",
-		workflowv1.OpGetRunCompleteness:           "GetCompleteness",
-		workflowv1.OpListCollectorInstances:       "ListInstances",
-		workflowv1.OpQueueDepthSnapshot:           "QueueDepth",
+		// OpCommitClaimFacts has no store entry on purpose: the proxy
+		// forwards to core and must never call the ClaimStore, so it
+		// contributes a served 200 with zero recorded store calls.
+		workflowv1.OpGetRunStatus:           "GetRunStatus",
+		workflowv1.OpListRuns:               "ListRuns",
+		workflowv1.OpGetRunCompleteness:     "GetCompleteness",
+		workflowv1.OpListCollectorInstances: "ListInstances",
+		workflowv1.OpQueueDepthSnapshot:     "QueueDepth",
 	}
 	for _, route := range workflowv1.RouteTable {
 		body, ok := bodies[route.Operation]
@@ -108,6 +124,9 @@ func TestAllRoutesAreServed(t *testing.T) {
 	}
 	wantOps := make([]string, 0, len(workflowv1.RouteTable))
 	for _, route := range workflowv1.RouteTable {
+		if route.Operation == workflowv1.OpCommitClaimFacts {
+			continue
+		}
 		op, ok := routeStoreOp[route.Operation]
 		if !ok {
 			t.Fatalf("no expected store op for %s", route.Operation)

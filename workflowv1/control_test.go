@@ -32,8 +32,8 @@ func TestControlPlaneOperationsAreRouted(t *testing.T) {
 			t.Fatalf("operation %q has an empty path", op)
 		}
 	}
-	if len(RouteTable) != 20 {
-		t.Fatalf("route table holds %d routes, want 20 (14 claim/report/read plus 6 control)", len(RouteTable))
+	if len(RouteTable) != 21 {
+		t.Fatalf("route table holds %d routes, want 21 (14 claim/report/read plus 6 control plus commit proxy)", len(RouteTable))
 	}
 }
 

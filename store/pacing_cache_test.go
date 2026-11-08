@@ -37,6 +37,7 @@ func TestGlobalPacingDeferralCarriesNoDomain(t *testing.T) {
 		t.Fatalf("configure: %v", err)
 	}
 	runID := seedRun(t, ctx, st)
+	declareJiraPrimary(t, ctx, st)
 	enqueueN(t, st, ctx, runID, "global", 3)
 	now := time.Now().UTC()
 

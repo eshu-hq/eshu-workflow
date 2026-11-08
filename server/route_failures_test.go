@@ -46,6 +46,15 @@ func routeCases() []routeCase {
 		{workflowv1.OpFailClaimTerminal, mutation, badMutation},
 		{workflowv1.OpValidateAndPinClaimForCommit, fmt.Sprintf(
 			`{"claim_id":"c-1","fencing_token":1,"scope_id":"scope-1","source_run_id":"sr-1","generation_id":"gen-1","commit_deadline":%q}`, later), `{}`},
+		// The commit route is a proxy: its valid body is forwarded, so
+		// the invalid body is an over-cap result the satellite refuses
+		// itself with zero forwards and zero store calls.
+		{workflowv1.OpCommitClaimFacts, fmt.Sprintf(
+			`{"work_item_id":"item-1","claim_id":"c-1","fencing_token":1,"owner_id":"o-1","observed_at":%q,"lease_duration_ns":60000000000,`+
+				`"idempotency_key":"idem-1","result_json":{"fact_rows":[]},"scope_id":"scope-1","source_run_id":"sr-1","generation_id":"gen-1"}`, now), fmt.Sprintf(
+			`{"work_item_id":"item-1","claim_id":"c-1","fencing_token":1,"owner_id":"o-1","observed_at":%q,"lease_duration_ns":60000000000,`+
+				`"idempotency_key":"idem-1","result_json":%q,"scope_id":"scope-1","source_run_id":"sr-1","generation_id":"gen-1"}`,
+			now, strings.Repeat("x", workflowv1.MaxCommitResultBytes+1))},
 		{workflowv1.OpCreateRun, fmt.Sprintf(
 			`{"run":{"run_id":"run-1","trigger_kind":"schedule","status":"collection_active","created_at":%q,"updated_at":%q}}`, now, now), `{"run":{}}`},
 		{workflowv1.OpEnqueueWorkItems, fmt.Sprintf(
@@ -89,7 +98,7 @@ func TestRouteCasesCoverTheWholeRouteTable(t *testing.T) {
 }
 
 // TestEveryRouteRejectsMalformedJSON requires an undecodable body to fail
-// 400 invalid before any store call, on all 20 routes.
+// 400 invalid before any store call, on all 21 routes.
 func TestEveryRouteRejectsMalformedJSON(t *testing.T) {
 	st := &fakeStore{}
 	srv := newTestServer(t, st)
@@ -142,6 +151,12 @@ func TestEveryValidatedRouteRejectsInvalidRequests(t *testing.T) {
 func TestEveryRouteSurfacesStoreFailures(t *testing.T) {
 	const secret = "pq: password authentication failed for user claimplane"
 	for _, rc := range routeCases() {
+		// The commit proxy never calls the store, so there is no store
+		// failure to map: its failure modes (unset target, dead core)
+		// are covered by the dedicated proxy tests instead.
+		if rc.op == workflowv1.OpCommitClaimFacts {
+			continue
+		}
 		t.Run(string(rc.op), func(t *testing.T) {
 			internal := &fakeStore{claimErr: fmt.Errorf("%s", secret)}
 			srv := newTestServer(t, internal)

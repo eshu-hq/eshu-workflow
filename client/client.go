@@ -155,6 +155,20 @@ func (c *Client) FailTerminal(ctx context.Context, mutation workflowv1.ClaimMuta
 	return c.mutation(ctx, workflowv1.OpFailClaimTerminal, mutation)
 }
 
+// CommitClaimFacts asks core (through the satellite proxy) to persist one
+// claim's fact result through the claimed-commit fence. The result is
+// terminal when over cap: Validate rejects it before any HTTP. The ack
+// means facts committed, never bytes received.
+func (c *Client) CommitClaimFacts(ctx context.Context, req workflowv1.CommitClaimFactsRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	var out struct {
+		OK bool `json:"ok"`
+	}
+	return c.call(ctx, workflowv1.OpCommitClaimFacts, req, &out)
+}
+
 // PinForCommit pins one claim for a fact commit so the reaper cannot
 // expire it before the commit deadline.
 func (c *Client) PinForCommit(

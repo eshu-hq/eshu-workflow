@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/eshu-hq/eshu-workflow/internal/telemetry"
@@ -48,13 +50,44 @@ type ClaimStore interface {
 	QueueDepth(ctx context.Context, now time.Time) (workflowv1.QueueDepthSnapshot, error)
 }
 
-// Server serves the 20 merged workflowv1 routes: the claim plane, the six
-// control-plane coordinator seams, the report plane, and the read plane.
+// Server serves the 21 merged workflowv1 routes: the claim plane, the
+// CommitClaimFacts proxy to core, the six control-plane coordinator
+// seams, the report plane, and the read plane.
 type Server struct {
 	store       ClaimStore
 	logger      *slog.Logger
 	Instruments *telemetry.Instruments
 	mux         *http.ServeMux
+	// commitCoreURL and commitClient forward CommitClaimFacts bodies to
+	// core byte-for-byte. Both unset is the dark default: the route
+	// fails closed until the command configures a core target.
+	commitCoreURL string
+	commitClient  *http.Client
+}
+
+// CommitForwardTimeout bounds one proxied commit to core. It must stay
+// longer than core's pin-deadline commit bound so a slow synchronous
+// commit still answers through the proxy; the core lane owns the exact
+// bound this timeout must exceed.
+const CommitForwardTimeout = 120 * time.Second
+
+// SetCommitForwarder configures the CommitClaimFacts proxy target. An
+// empty or malformed URL leaves the forwarder unset: the route then
+// fails closed instead of forwarding at an accidental target.
+func (srv *Server) SetCommitForwarder(coreURL string, client *http.Client) {
+	trimmed := strings.TrimRight(strings.TrimSpace(coreURL), "/")
+	if trimmed == "" || client == nil {
+		return
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return
+	}
+	srv.commitCoreURL = trimmed
+	srv.commitClient = client
 }
 
 // New builds a server over store. A nil logger discards; instruments stay
@@ -72,6 +105,7 @@ func New(store ClaimStore, logger *slog.Logger) (*Server, error) {
 	srv.mux.HandleFunc("POST /workflow.v1/FailClaimRetryable", srv.serveFailRetryable)
 	srv.mux.HandleFunc("POST /workflow.v1/FailClaimTerminal", srv.serveFailTerminal)
 	srv.mux.HandleFunc("POST /workflow.v1/ValidateAndPinClaimForCommit", srv.servePin)
+	srv.mux.HandleFunc("POST /workflow.v1/CommitClaimFacts", srv.serveCommitClaimFacts)
 	srv.mux.HandleFunc("POST /workflow.v1/CreateRun", srv.serveCreateRun)
 	srv.mux.HandleFunc("POST /workflow.v1/EnqueueWorkItems", srv.serveEnqueueWorkItems)
 	srv.mux.HandleFunc("POST /workflow.v1/ReconcileCollectorInstances", srv.serveReconcileCollectorInstances)
@@ -110,9 +144,18 @@ func (srv *Server) begin(writer http.ResponseWriter, request *http.Request, oper
 	return inv, true
 }
 
-// decode reads a required JSON body into value.
+// decode reads a required JSON body into value, bounded by the protocol
+// body cap every pre-commit route shares.
 func (srv *Server) decode(inv invocation, operation string, value any) bool {
-	inv.request.Body = http.MaxBytesReader(inv.writer, inv.request.Body, maxBodyBytes)
+	return srv.decodeWithLimit(inv, operation, value, maxBodyBytes)
+}
+
+// decodeWithLimit reads a required JSON body into value bounded by
+// limit. Splitting the limit out keeps all 20 pre-commit routes on
+// maxBodyBytes byte-for-byte while the commit proxy carries its own
+// shared cap.
+func (srv *Server) decodeWithLimit(inv invocation, operation string, value any, limit int64) bool {
+	inv.request.Body = http.MaxBytesReader(inv.writer, inv.request.Body, limit)
 	decoder := json.NewDecoder(inv.request.Body)
 	if err := decoder.Decode(value); err != nil {
 		srv.fail(inv, operation, &workflowv1.ProtocolError{

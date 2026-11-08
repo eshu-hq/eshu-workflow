@@ -11,8 +11,8 @@ import (
 )
 
 func TestRouteTableCoversAllPlanes(t *testing.T) {
-	if len(RouteTable) != 20 {
-		t.Fatalf("route table has %d entries, want 20", len(RouteTable))
+	if len(RouteTable) != 21 {
+		t.Fatalf("route table has %d entries, want 21", len(RouteTable))
 	}
 	seen := map[string]bool{}
 	for _, route := range RouteTable {
@@ -37,7 +37,7 @@ func TestRouteTableCoversAllPlanes(t *testing.T) {
 	for _, op := range []Operation{
 		OpClaimNext, OpCheckClaimPacing, OpHeartbeatClaim, OpCompleteClaim,
 		OpReleaseClaim, OpFailClaimRetryable, OpFailClaimTerminal,
-		OpValidateAndPinClaimForCommit, OpCreateRun, OpEnqueueWorkItems,
+		OpValidateAndPinClaimForCommit, OpCommitClaimFacts, OpCreateRun, OpEnqueueWorkItems,
 		OpReconcileCollectorInstances, OpUpsertCompletenessStates,
 		OpReconcileWorkflowRuns, OpReapExpiredClaims, OpReportRunProgress,
 		OpGetRunStatus, OpListRuns, OpGetRunCompleteness,
