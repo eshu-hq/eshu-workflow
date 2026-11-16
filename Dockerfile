@@ -4,12 +4,12 @@
 # Workflow service image: static binaries plus CA roots, no shell. One
 # image ships both binaries; deployments override the entrypoint to run
 # the coordinator instead of the claim-plane server.
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
 
 # Base digests resolved 2026-10-28 via `crane digest`; re-pin with the same
 # command when bumping either base. Digest pins keep ops-qa deploys on an
 # immutable rootfs (the ci image lane enforces every FROM is pinned).
-FROM golang:${GO_VERSION}-bookworm@sha256:386f0cbb8fb3402ff5a15048c96731e6ff37142d31182f3b72306359a1f5e9b7 AS build
+FROM golang:${GO_VERSION}-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

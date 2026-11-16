@@ -8,6 +8,46 @@ import (
 	"testing"
 )
 
+// TestRunStatusTerminalClassification pins the closed status set the
+// admission guard walks: every known status classifies terminal or open,
+// and the open set is exactly what the guard pages. Adding a RunStatus
+// fails here until it is classified.
+func TestRunStatusTerminalClassification(t *testing.T) {
+	t.Parallel()
+
+	all := AllRunStatuses()
+	if len(all) != 6 {
+		t.Fatalf("AllRunStatuses() has %d entries, want 6: classify the new status", len(all))
+	}
+	terminal := map[RunStatus]bool{}
+	open := map[RunStatus]bool{}
+	for _, status := range all {
+		if err := status.Validate(); err != nil {
+			t.Fatalf("AllRunStatuses() entry %q fails Validate: %v", string(status), err)
+		}
+		if status.IsTerminal() {
+			terminal[status] = true
+		} else {
+			open[status] = true
+		}
+	}
+	for _, want := range []RunStatus{RunStatusComplete, RunStatusFailed} {
+		if !terminal[want] {
+			t.Fatalf("status %q must classify terminal", string(want))
+		}
+	}
+	for _, want := range []RunStatus{
+		RunStatusCollectionPending,
+		RunStatusCollectionActive,
+		RunStatusCollectionComplete,
+		RunStatusReducerConverging,
+	} {
+		if !open[want] {
+			t.Fatalf("status %q must classify open (guard walks it)", string(want))
+		}
+	}
+}
+
 func TestClosedEnumsAcceptKnownMembers(t *testing.T) {
 	if err := TriggerKindBootstrap.Validate(); err != nil {
 		t.Fatal(err)
