@@ -32,10 +32,26 @@ type ControlPlane interface {
 	QueueDepthSnapshot(context.Context) (workflowv1.QueueDepthSnapshot, error)
 }
 
-// runListPageCap bounds the admission guard's ListRuns walk: twenty full
-// pages cover twenty thousand open runs, past which the guard reports the
-// bound instead of paging forever.
+// runListPageCap bounds each per-status ListRuns walk of the admission
+// guard: twenty full pages cover two thousand open runs per status,
+// past which the guard reports the bound instead of paging forever.
+// Terminal history is excluded by the server-side status filter, so deep
+// complete/failed history can no longer bury an open cover past the walk.
 const runListPageCap = 20
+
+// guardWalkStatuses is the pinned source of the statuses the admission
+// guard walks, derived from the exhaustive workflowv1 set: every known
+// non-terminal status gets its own filtered walk. A new RunStatus fails
+// TestAllRunStatusesPinned until it is classified here by construction.
+func guardWalkStatuses() []workflowv1.RunStatus {
+	var out []workflowv1.RunStatus
+	for _, status := range workflowv1.AllRunStatuses() {
+		if !status.IsTerminal() {
+			out = append(out, status)
+		}
+	}
+	return out
+}
 
 // Service is the ported workflow coordinator runner.
 type Service struct {
@@ -296,29 +312,35 @@ func (s Service) planFamily(
 }
 
 // openRunCovers reports whether a non-terminal run already owns the same
-// collector and scope set. The walk pages the read plane newest-first
-// and stops at the first cover or the page cap.
+// collector and scope set. Each non-terminal status gets its own filtered
+// walk newest-first, stopping at the first cover; only after every walk
+// reaches the end does the guard report no cover. A walk that exhausts
+// the page cap still trips fail-closed, exactly like before.
 func (s Service) openRunCovers(ctx context.Context, collector, scopeSet string) (bool, error) {
-	cursor := ""
-	for range runListPageCap {
-		page, err := s.Plane.ListRuns(ctx, workflowv1.ListRunsRequest{Limit: 100, Cursor: cursor})
-		if err != nil {
-			return false, err
-		}
-		for _, summary := range page.Runs {
-			if summary.Status == workflowv1.RunStatusComplete || summary.Status == workflowv1.RunStatusFailed {
-				continue
+	for _, status := range guardWalkStatuses() {
+		cursor := ""
+		exhausted := true
+		for range runListPageCap {
+			page, err := s.Plane.ListRuns(ctx, workflowv1.ListRunsRequest{Status: status, Limit: 100, Cursor: cursor})
+			if err != nil {
+				return false, err
 			}
-			if summary.RequestedCollector == collector && summary.RequestedScopeSet == scopeSet {
-				return true, nil
+			for _, summary := range page.Runs {
+				if summary.RequestedCollector == collector && summary.RequestedScopeSet == scopeSet {
+					return true, nil
+				}
 			}
+			if page.NextCursor == "" {
+				exhausted = false
+				break
+			}
+			cursor = page.NextCursor
 		}
-		if page.NextCursor == "" {
-			return false, nil
+		if exhausted {
+			return false, fmt.Errorf("open-run guard exceeded %d ListRuns pages for status %q", runListPageCap, string(status))
 		}
-		cursor = page.NextCursor
 	}
-	return false, fmt.Errorf("open-run guard exceeded %d ListRuns pages", runListPageCap)
+	return false, nil
 }
 
 // Reap expires stale claims past now and requeues their work. It is a
