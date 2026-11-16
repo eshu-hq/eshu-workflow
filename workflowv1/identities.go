@@ -55,13 +55,36 @@ const (
 	RunStatusFailed             RunStatus = "failed"
 )
 
-// Validate checks that the run status is known.
+// Validate checks that the run status is known. It single-sources the
+// closed set from AllRunStatuses: a status missing there fails Validate
+// everywhere, so it can only become usable by entering AllRunStatuses,
+// which breaks the classification pins until it is terminal or open.
 func (s RunStatus) Validate() error {
-	switch s {
-	case RunStatusCollectionPending, RunStatusCollectionActive, RunStatusCollectionComplete, RunStatusReducerConverging, RunStatusComplete, RunStatusFailed:
-		return nil
-	default:
-		return fmt.Errorf("unknown workflow run status %q", string(s))
+	for _, known := range AllRunStatuses() {
+		if s == known {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown workflow run status %q", string(s))
+}
+
+// IsTerminal reports whether the run status ends the run. The admission
+// guard treats every other known status as open.
+func (s RunStatus) IsTerminal() bool {
+	return s == RunStatusComplete || s == RunStatusFailed
+}
+
+// AllRunStatuses is the pinned closed set of run statuses. The admission
+// guard derives its per-status walks from this list, so adding a status
+// here without classifying it fails TestAllRunStatusesPinned on purpose.
+func AllRunStatuses() []RunStatus {
+	return []RunStatus{
+		RunStatusCollectionPending,
+		RunStatusCollectionActive,
+		RunStatusCollectionComplete,
+		RunStatusReducerConverging,
+		RunStatusComplete,
+		RunStatusFailed,
 	}
 }
 
