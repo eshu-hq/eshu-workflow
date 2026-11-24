@@ -52,7 +52,7 @@ has no production pairing yet.
 
 ## Shortest path in
 
-You'll need Go 1.26.10 and a Postgres database the claim-plane can own.
+You'll need Go 1.26.11 and a Postgres database the claim-plane can own.
 It runs its own fresh-install migrations from `store/migrations` at
 startup.
 
@@ -90,9 +90,12 @@ run, health checks, and the off-by-default switches.
 
 ## Related repos
 
-Eshu core (`eshu-hq/eshu`) owns the collectors, the grants, and the fact
-commit path this service plans work for. Core talks to this repo only
-through the `workflow.v1` protocol, never through shared tables.
+[Eshu core](https://github.com/eshu-hq/eshu) owns the collectors, the
+grants, and the fact commit path this service plans work for. Core talks
+to this repo only through the `workflow.v1` protocol, never through
+shared tables. See [eshu-deploy](https://github.com/eshu-hq/eshu-deploy)
+for deployment wiring, [Collector and Reducer Readiness](https://github.com/eshu-hq/eshu/blob/main/docs/public/reference/collector-reducer-readiness.md)
+for collector lanes, and the 31-repo [Repository Map](https://github.com/eshu-hq/eshu/blob/main/REPOSITORIES.md).
 
 ## Development
 
