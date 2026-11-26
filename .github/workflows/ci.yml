@@ -147,7 +147,7 @@ jobs:
     needs: [changes]
     # No timeout-minutes: the schema forbids it on reusable-call jobs. Each
     # inner lane carries its own timeout, which bounds this job.
-    uses: eshu-hq/.github/.github/workflows/go-collector-ci.yml@048d30a904b9e5f02ab8276285f0e889ce7820b0 # v2+postgres
+    uses: eshu-hq/.github/.github/workflows/go-collector-ci.yml@f76c87e1e0d5eee40e32a1f908868fa397dbd4a1 # v2+postgres
     with:
       module: eshu-workflow
       go-version-file: go.mod
